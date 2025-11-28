@@ -19,7 +19,7 @@ O dashboard está integrado ao Flask e é servido automaticamente quando você i
 
 ```bash
 # Navegue até a raiz do projeto
-cd /caminho/do/projeto
+cd /scripts/
 
 # Inicie a API
 python scripts/app.py

@@ -15,14 +15,29 @@
 #
 # ============================================================================
 
-# Configurações - AJUSTE ESTES VALORES
-$pythonPath = "C:\Python39\python.exe"
+# Detectar Python automaticamente (tenta python, depois python3)
+$pythonPath = $null
+if (Get-Command python -ErrorAction SilentlyContinue) {
+    $pythonPath = (Get-Command python).Source
+} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+    $pythonPath = (Get-Command python3).Source
+} else {
+    Write-Error "❌ ERRO: Python não encontrado. Instale Python 3."
+    exit 1
+}
+
 # Caminho relativo ao diretório raiz do projeto
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $scriptPath = Join-Path $projectRoot "scripts\sincronizar_pluviometricos_novos.py"
 $workDir = $projectRoot
 $logDir = Join-Path $workDir "logs"
 $logFile = Join-Path $logDir "sincronizacao_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+
+# Verificar se o script existe
+if (-not (Test-Path $scriptPath)) {
+    Write-Error "❌ ERRO: Script não encontrado: $scriptPath"
+    exit 1
+}
 
 # Criar diretório de logs se não existir
 if (-not (Test-Path $logDir)) {

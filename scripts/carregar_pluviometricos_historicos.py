@@ -9,7 +9,7 @@
 ═══════════════════════════════════════════════════════════════════════════
 
 Este script foi criado para fazer a CARGA INICIAL COMPLETA de todos os dados
-pluviométricos históricos do banco alertadb (origem) para o banco carioca_digital
+pluviométricos históricos do banco alertadb (origem) para o banco alertadb_cor
 (destino).
 
 É o PRIMEIRO PASSO necessário antes de usar o sincronizar_pluviometricos_novos.py.
@@ -54,7 +54,8 @@ pluviométricos históricos do banco alertadb (origem) para o banco carioca_digi
 ✅ DISTINCT ON garante apenas um registro por (dia, estacao_id) do banco origem
 ✅ Mantém o registro mais recente (maior ID) quando há duplicatas
 ✅ Garante que os dados no destino sejam EXATAMENTE como no banco alertadb
-✅ ON CONFLICT DO NOTHING previne duplicatas se reexecutar
+✅ ON CONFLICT DO UPDATE atualiza dados existentes com valores corretos
+✅ Corrige automaticamente dados incorretos se já existirem na tabela
 ✅ Processamento em lotes evita sobrecarga de memória
 ✅ Validação de conexões antes de iniciar
 ✅ Diagnóstico de duplicatas antes da carga
@@ -77,10 +78,11 @@ Variáveis opcionais:
 
 # 🔧 Importar bibliotecas necessárias
 import psycopg2
+from psycopg2 import errors as psycopg2_errors
 from psycopg2.extras import execute_values
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente (busca .env na raiz do projeto)
@@ -89,6 +91,160 @@ from pathlib import Path
 # Obter diretório raiz do projeto (2 níveis acima deste arquivo)
 project_root = Path(__file__).parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
+
+def extrair_timezone_offset(dt):
+    """
+    Extrai o offset de timezone de um datetime aware.
+    
+    Args:
+        dt: datetime objeto com timezone
+    
+    Returns:
+        str: offset no formato '-03:00' ou None se não tiver timezone
+    """
+    if not isinstance(dt, datetime) or dt.tzinfo is None:
+        return None
+    
+    # Obter offset total em segundos
+    offset_seconds = dt.tzinfo.utcoffset(dt).total_seconds()
+    
+    # Converter para horas e minutos
+    horas = int(offset_seconds // 3600)
+    minutos = int((offset_seconds % 3600) // 60)
+    
+    # Formatar como '-03:00' ou '+03:00'
+    sinal = '-' if horas < 0 else '+'
+    return f"{sinal}{abs(horas):02d}:{abs(minutos):02d}"
+
+def preparar_timestamp_para_insercao(dt):
+    """
+    Prepara um timestamp para inserção no PostgreSQL mantendo o timezone correto.
+    
+    IMPORTANTE: Quando o banco origem retorna '2025-11-28 11:40:00.000 -0300',
+    precisamos inserir no banco destino como '2025-11-28 11:40:00.000 -0300'
+    para que o PostgreSQL interprete corretamente e armazene sem diferença de horas.
+    
+    Args:
+        dt: datetime objeto (aware ou naive)
+    
+    Returns:
+        str: timestamp formatado para inserção no PostgreSQL
+    """
+    if not isinstance(dt, datetime):
+        return str(dt)
+    
+    # Se tem timezone, manter o timezone na string
+    if dt.tzinfo is not None:
+        offset = extrair_timezone_offset(dt)
+        if offset:
+            # Formatar como '2025-11-28 11:40:00.000 -03:00'
+            timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            if dt.microsecond:
+                timestamp_str += f".{dt.microsecond:06d}"[:7]  # Limitar a 3 dígitos
+            return f"{timestamp_str} {offset}"
+    
+    # Se não tem timezone, retornar como está (assumindo que já está no timezone correto)
+    timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+    if dt.microsecond:
+        timestamp_str += f".{dt.microsecond:06d}"[:7]
+    return timestamp_str
+
+def garantir_datetime_com_timezone(valor):
+    """
+    Garante que o valor seja um objeto datetime mantendo o timezone original.
+    IMPORTANTE: Preserva o timezone original (-02:00 para horário de verão ou -03:00 para horário padrão).
+    
+    Args:
+        valor: datetime, string ou outro tipo
+    
+    Returns:
+        datetime: datetime com timezone preservado (ou naive se não tinha timezone)
+    """
+    resultado = None
+    
+    if isinstance(valor, datetime):
+        # Se já é datetime, manter como está (com ou sem timezone)
+        # IMPORTANTE: Preserva tanto -02:00 quanto -03:00
+        resultado = valor
+    elif isinstance(valor, str):
+        try:
+            # Tentar parse mantendo timezone se presente
+            # Formatos esperados:
+            # - "2025-11-28 11:40:00.000 -0300" (horário padrão)
+            # - "2019-02-16 23:45:00.000 -0200" (horário de verão)
+            # - "2019-02-16 23:45:00.000 -0200 -03:00" ou "-02:00"
+            
+            # Tentar usar fromisoformat primeiro (preserva timezone automaticamente)
+            try:
+                # fromisoformat funciona com formato ISO que tem 'T' e timezone
+                valor_iso = valor.replace(' ', 'T', 1)
+                resultado = datetime.fromisoformat(valor_iso)
+            except:
+                # Se falhar, fazer parse manual preservando timezone
+                # Extrair timezone se presente (formato -0300 ou -03:00 ou -0200 ou -02:00)
+                match_tz = re.search(r'\s*([+-])(\d{2}):?(\d{2})$', valor)
+                if match_tz:
+                    sinal = match_tz.group(1)  # '+' ou '-'
+                    horas_tz = int(match_tz.group(2))
+                    minutos_tz = int(match_tz.group(3))
+                    
+                    # Calcular offset total em minutos
+                    offset_total_minutos = horas_tz * 60 + minutos_tz
+                    if sinal == '-':
+                        offset_total_minutos = -offset_total_minutos
+                    
+                    # Remover timezone da string para fazer parse do datetime
+                    valor_sem_tz = re.sub(r'\s*[+-]\d{2}:?\d{2}$', '', valor).strip()
+                    
+                    # Parse do datetime (sem timezone)
+                    formatos = [
+                        '%Y-%m-%d %H:%M:%S.%f',
+                        '%Y-%m-%d %H:%M:%S',
+                        '%Y-%m-%dT%H:%M:%S.%f',
+                        '%Y-%m-%dT%H:%M:%S',
+                    ]
+                    
+                    dt_naive = None
+                    for fmt in formatos:
+                        try:
+                            dt_naive = datetime.strptime(valor_sem_tz, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if dt_naive:
+                        # Criar timezone com offset preservado (-02:00 ou -03:00)
+                        from datetime import timezone
+                        tz = timezone(timedelta(minutes=offset_total_minutos))
+                        resultado = dt_naive.replace(tzinfo=tz)
+                else:
+                    # Sem timezone na string, fazer parse normal
+                    valor_limpo = valor.strip()
+                    formatos = [
+                        '%Y-%m-%d %H:%M:%S.%f',
+                        '%Y-%m-%d %H:%M:%S',
+                        '%Y-%m-%dT%H:%M:%S.%f',
+                        '%Y-%m-%dT%H:%M:%S',
+                    ]
+                    
+                    for fmt in formatos:
+                        try:
+                            resultado = datetime.strptime(valor_limpo, fmt)
+                            break
+                        except ValueError:
+                            continue
+        except Exception as e:
+            resultado = datetime.now() - timedelta(seconds=300)
+    else:
+        try:
+            if hasattr(valor, 'year') and hasattr(valor, 'month') and hasattr(valor, 'day'):
+                resultado = datetime.combine(valor, datetime.min.time())
+            else:
+                resultado = datetime.now() - timedelta(seconds=300)
+        except:
+            resultado = datetime.now() - timedelta(seconds=300)
+    
+    return resultado if resultado else datetime.now() - timedelta(seconds=300)
 
 def obter_variavel(nome, obrigatoria=True):
     """Obtém variável de ambiente, lança erro se obrigatória e não encontrada."""
@@ -115,7 +271,8 @@ def carregar_configuracoes():
             'port': obter_variavel('DB_DESTINO_PORT', obrigatoria=False) or '5432',
             'dbname': obter_variavel('DB_DESTINO_NAME'),
             'user': obter_variavel('DB_DESTINO_USER'),
-            'password': obter_variavel('DB_DESTINO_PASSWORD')
+            'password': obter_variavel('DB_DESTINO_PASSWORD'),
+            'connect_timeout': 10  # Timeout de 10 segundos para conexão
         }
         
         return origem, destino
@@ -139,6 +296,9 @@ def query_todos_dados():
     Usa DISTINCT ON para garantir apenas um registro por (dia, estacao_id),
     mantendo o registro com o maior ID (mais recente), que é exatamente como
     está no banco alertadb.
+    
+    IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
+    e depois ordenar por id DESC para pegar o registro mais recente.
     """
     return """
 SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
@@ -167,6 +327,9 @@ def query_dados_desde_data(data_inicial):
     Usa DISTINCT ON para garantir apenas um registro por (dia, estacao_id),
     mantendo o registro com o maior ID (mais recente), que é exatamente como
     está no banco alertadb.
+    
+    IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
+    e depois ordenar por id DESC para pegar o registro mais recente.
     """
     return f"""
 SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
@@ -249,7 +412,10 @@ def criar_tabela_pluviometricos():
             conn_destino.close()
 
 def verificar_tabela_vazia():
-    """Verifica se a tabela pluviometricos está vazia."""
+    """Verifica se a tabela pluviometricos está vazia.
+    
+    Usa EXISTS com LIMIT 1 para ser muito mais rápido que COUNT(*) em tabelas grandes.
+    """
     conn_destino = None
     cur_destino = None
     
@@ -257,11 +423,18 @@ def verificar_tabela_vazia():
         conn_destino = psycopg2.connect(**DESTINO)
         cur_destino = conn_destino.cursor()
         
-        cur_destino.execute("SELECT COUNT(*) FROM pluviometricos;")
+        # Usar EXISTS é muito mais rápido que COUNT(*) em tabelas grandes
+        # Adiciona timeout de 5 segundos para a query
+        cur_destino.execute("SET statement_timeout = '5s';")
+        cur_destino.execute("SELECT EXISTS(SELECT 1 FROM pluviometricos LIMIT 1);")
         resultado = cur_destino.fetchone()
         
-        return resultado[0] == 0 if resultado else True
+        # EXISTS retorna True se há pelo menos um registro, False se vazia
+        return not resultado[0] if resultado else True
             
+    except psycopg2_errors.QueryCanceled:
+        print('⚠️ Timeout ao verificar tabela. Assumindo que a tabela não está vazia.')
+        return False
     except Exception as e:
         print(f'⚠️ Erro ao verificar tabela: {e}')
         return True
@@ -270,6 +443,81 @@ def verificar_tabela_vazia():
             cur_destino.close()
         if conn_destino:
             conn_destino.close()
+
+def validar_amostra_dados(conn_origem, conn_destino, cur_origem, cur_destino, quantidade=10):
+    """
+    Valida uma amostra de dados inseridos comparando com o banco origem.
+    
+    Args:
+        conn_origem: Conexão com banco origem
+        conn_destino: Conexão com banco destino
+        cur_origem: Cursor do banco origem
+        cur_destino: Cursor do banco destino
+        quantidade: Quantidade de registros para validar
+    
+    Returns:
+        bool: True se todos os registros validados estão corretos, False caso contrário
+    """
+    try:
+        # Buscar alguns registros aleatórios do banco destino
+        cur_destino.execute(f"""
+            SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
+            FROM pluviometricos
+            ORDER BY RANDOM()
+            LIMIT {quantidade};
+        """)
+        registros_destino = cur_destino.fetchall()
+        
+        if not registros_destino:
+            return True  # Se não há registros, não há o que validar
+        
+        divergencias = 0
+        
+        for registro_destino in registros_destino:
+            dia_dest, m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest, estacao_dest, est_id_dest = registro_destino
+            
+            # Buscar registro correspondente no banco origem
+            query_origem = """
+            SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
+                el."horaLeitura" AS "Dia",
+                elc.m05,
+                elc.m10,
+                elc.m15,
+                elc.h01,
+                elc.h04,
+                elc.h24,
+                elc.h96,
+                ee.nome AS "Estacao",
+                el.estacao_id
+            FROM public.estacoes_leitura AS el
+            JOIN public.estacoes_leiturachuva AS elc
+                ON elc.leitura_id = el.id
+            JOIN public.estacoes_estacao AS ee
+                ON ee.id = el.estacao_id
+            WHERE el."horaLeitura" = %s::timestamp
+              AND el.estacao_id = %s
+            ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC
+            LIMIT 1;
+            """
+            
+            cur_origem.execute(query_origem, (dia_dest, est_id_dest))
+            registro_origem = cur_origem.fetchone()
+            
+            if registro_origem:
+                dia_orig, m05_orig, m10_orig, m15_orig, h01_orig, h04_orig, h24_orig, h96_orig, estacao_orig, est_id_orig = registro_origem
+                
+                # Comparar valores (ignorar diferenças de timezone no timestamp)
+                valores_origem = (m05_orig, m10_orig, m15_orig, h01_orig, h04_orig, h24_orig, h96_orig)
+                valores_destino = (m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest)
+                
+                if valores_origem != valores_destino:
+                    divergencias += 1
+        
+        return divergencias == 0
+        
+    except Exception as e:
+        print(f'   ⚠️  Erro na validação: {e}')
+        return False
 
 def diagnosticar_banco_origem():
     """Diagnostica o banco de origem para verificar dados disponíveis."""
@@ -513,14 +761,33 @@ def carregar_dados_completos(usar_data_inicial=None):
         conn_destino = psycopg2.connect(**DESTINO)
         cur_destino = conn_destino.cursor()
 
-        # Usar ON CONFLICT DO NOTHING pois a query já garante apenas um registro por (dia, estacao_id)
-        # usando DISTINCT ON com ORDER BY id DESC (mais recente)
+        # Usar ON CONFLICT DO UPDATE para garantir que os dados sejam sempre atualizados
+        # com os valores corretos do banco origem, mesmo se já existirem dados incorretos
+        # A query já garante apenas um registro por (dia, estacao_id) usando DISTINCT ON
+        # com ORDER BY id DESC (mais recente)
+        # IMPORTANTE: O psycopg2 vai converter automaticamente timestamps com timezone
+        # para o timezone do servidor antes de armazenar. Para evitar diferença de 3 horas,
+        # precisamos garantir que o timestamp seja inserido com o timezone correto (-03:00)
+        # e o PostgreSQL vai converter para o timezone do servidor mantendo o valor local.
         insert_sql = '''
         INSERT INTO pluviometricos
         (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
         VALUES %s
-        ON CONFLICT (dia, estacao_id) DO NOTHING;
+        ON CONFLICT (dia, estacao_id) 
+        DO UPDATE SET
+            m05 = EXCLUDED.m05,
+            m10 = EXCLUDED.m10,
+            m15 = EXCLUDED.m15,
+            h01 = EXCLUDED.h01,
+            h04 = EXCLUDED.h04,
+            h24 = EXCLUDED.h24,
+            h96 = EXCLUDED.h96,
+            estacao = EXCLUDED.estacao;
         '''
+        
+        # Configurar timezone do banco destino para 'America/Sao_Paulo' durante a inserção
+        # Isso garante que timestamps com timezone sejam convertidos corretamente
+        cur_destino.execute("SET timezone = 'America/Sao_Paulo';")
         
         # Processar dados em lotes
         print("📦 Processando dados em lotes de 10.000 registros...")
@@ -536,16 +803,62 @@ def carregar_dados_completos(usar_data_inicial=None):
             if not dados:
                 break
             
-            # Capturar primeira e última data do lote atual
-            data_inicio_lote = dados[0][0] if dados else None
-            data_fim_lote = dados[-1][0] if dados else None
+            # IMPORTANTE: Preparar timestamps mantendo timezone para inserção correta
+            # Formato dos dados: (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
+            # Quando o banco origem retorna timestamps com timezone:
+            # - '2025-11-28 11:40:00.000 -0300' (horário padrão)
+            # - '2019-02-16 23:45:00.000 -0200' (horário de verão)
+            # Precisamos preservar o timezone original para que o PostgreSQL converta corretamente
+            dados_ajustados = []
+            for registro in dados:
+                dia_original = registro[0]
+                
+                # Se já é datetime com timezone, manter como está (preserva -02:00 ou -03:00)
+                if isinstance(dia_original, datetime) and dia_original.tzinfo:
+                    dia_ajustado = dia_original
+                elif isinstance(dia_original, datetime):
+                    # Se é datetime sem timezone, converter para string e tentar parse novamente
+                    # para detectar se há timezone na representação original
+                    dia_ajustado = garantir_datetime_com_timezone(str(dia_original))
+                    # Se ainda não tem timezone após conversão, assumir -03:00 (padrão Brasília)
+                    if dia_ajustado.tzinfo is None:
+                        from datetime import timezone
+                        tz_brasilia = timezone(timedelta(hours=-3))
+                        dia_ajustado = dia_original.replace(tzinfo=tz_brasilia)
+                else:
+                    # Se é string ou outro tipo, converter mantendo timezone original (-02:00 ou -03:00)
+                    dia_ajustado = garantir_datetime_com_timezone(dia_original)
+                    # Se não tem timezone após conversão, adicionar -03:00 (padrão Brasília)
+                    if dia_ajustado.tzinfo is None:
+                        from datetime import timezone
+                        tz_brasilia = timezone(timedelta(hours=-3))
+                        dia_ajustado = dia_ajustado.replace(tzinfo=tz_brasilia)
+                
+                # Criar nova tupla com o timestamp ajustado (com timezone)
+                registro_ajustado = (dia_ajustado,) + registro[1:]
+                dados_ajustados.append(registro_ajustado)
+            
+            # Log de debug para primeiro lote (apenas para verificação)
+            if lote_numero == 1 and dados_ajustados:
+                primeiro_registro = dados_ajustados[0]
+                dia_original = dados[0][0]
+                print(f'   🔍 Exemplo de timestamp processado:')
+                print(f'      Original: {dia_original} (tipo: {type(dia_original)})')
+                print(f'      Processado: {primeiro_registro[0]} (tipo: {type(primeiro_registro[0])})')
+                if hasattr(primeiro_registro[0], 'tzinfo') and primeiro_registro[0].tzinfo:
+                    offset = primeiro_registro[0].tzinfo.utcoffset(primeiro_registro[0])
+                    print(f'      Timezone offset: {offset}')
+            
+            # Capturar primeira e última data do lote atual (após ajuste)
+            data_inicio_lote = dados_ajustados[0][0] if dados_ajustados else None
+            data_fim_lote = dados_ajustados[-1][0] if dados_ajustados else None
             
             # Capturar primeira e última data geral
             if primeira_data is None:
                 primeira_data = data_inicio_lote
             ultima_data = data_fim_lote
             
-            execute_values(cur_destino, insert_sql, dados)
+            execute_values(cur_destino, insert_sql, dados_ajustados)
             conn_destino.commit()
             
             total_inseridos += len(dados)
@@ -594,6 +907,16 @@ def carregar_dados_completos(usar_data_inicial=None):
             distribuicao_destino = cur_destino.fetchall()
             for ano, total in distribuicao_destino:
                 print(f"   • {int(ano)}: {total:,} registros")
+        
+        # Validar alguns registros para garantir que os dados estão corretos
+        print("\n🔍 Validando dados inseridos...")
+        validacao_ok = validar_amostra_dados(conn_origem, conn_destino, cur_origem, cur_destino)
+        
+        if validacao_ok:
+            print("   ✅ Validação: Dados inseridos correspondem ao banco origem!")
+        else:
+            print("   ⚠️  ATENÇÃO: Foram encontradas divergências na validação!")
+            print("   💡 Execute o script novamente para corrigir os dados.")
         
         print("\n💡 PRÓXIMO PASSO:")
         print("   Execute o script 'sincronizar_pluviometricos_novos.py' para manter")

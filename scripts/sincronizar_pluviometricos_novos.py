@@ -11,7 +11,7 @@
 Este script foi criado para ATUALIZAR APENAS OS NOVOS DADOS desde a última
 sincronização. Ele mantém os dados atualizados em tempo real, verificando
 novos registros a cada 5 minutos no banco alertadb (origem) e sincronizando
-para o banco carioca_digital (destino).
+para o banco alertadb_cor (destino).
 
 É o SEGUNDO PASSO após executar o carregar_pluviometricos_historicos.py.
 
@@ -22,10 +22,11 @@ para o banco carioca_digital (destino).
 ✅ Busca APENAS registros NOVOS desde a última sincronização
 ✅ Verifica novos dados a cada 5 minutos automaticamente (configurável)
 ✅ Executa em modo contínuo até ser interrompido (Ctrl+C)
-✅ Usa ON CONFLICT DO NOTHING para evitar sobrepor dados existentes
+✅ Usa ON CONFLICT DO UPDATE para atualizar dados existentes com valores corretos
 ✅ Chave primária composta (dia, estacao_id) garante unicidade
-✅ NUNCA modifica ou deleta dados existentes
-✅ Apenas ADICIONA novos registros
+✅ Atualiza dados existentes se houver mudanças no banco origem
+✅ Garante que os dados no destino correspondam exatamente ao banco origem
+✅ Adiciona novos registros e atualiza existentes quando necessário
 
 ═══════════════════════════════════════════════════════════════════════════
 ⚠️ QUANDO USAR ESTE SCRIPT:
@@ -56,7 +57,7 @@ para o banco carioca_digital (destino).
 
 1. Busca o último timestamp sincronizado na tabela destino (MAX(dia))
 2. Consulta apenas registros com horaLeitura > último timestamp
-3. Insere novos registros usando ON CONFLICT DO NOTHING
+3. Insere novos registros usando ON CONFLICT DO UPDATE (atualiza se já existir)
 4. Aguarda 5 minutos (configurável) e repete o processo
 5. Continua indefinidamente até ser interrompido
 
@@ -64,14 +65,14 @@ para o banco carioca_digital (destino).
 🔒 PROTEÇÕES IMPLEMENTADAS:
 ═══════════════════════════════════════════════════════════════════════════
 
-✅ ON CONFLICT DO NOTHING: Previne duplicatas e sobreposição de dados
+✅ ON CONFLICT DO UPDATE: Atualiza dados existentes com valores corretos do banco origem
 ✅ Chave primária composta (dia, estacao_id): Garante unicidade
 ✅ Validação: Verifica se tabela não está vazia antes de atualizar
 ✅ Validação: Verifica última sincronização antes de buscar novos dados
 ✅ Tratamento de erros: Continua rodando mesmo se houver falha temporária
-✅ NUNCA modifica dados existentes
-✅ NUNCA deleta dados
-✅ APENAS adiciona novos registros
+✅ Atualiza dados existentes se houver mudanças no banco origem
+✅ Garante que os dados no destino correspondam exatamente ao banco origem
+✅ Adiciona novos registros e atualiza existentes quando necessário
 
 ═══════════════════════════════════════════════════════════════════════════
 ⏱️ INTERVALO DE ATUALIZAÇÃO:
@@ -192,12 +193,46 @@ def query_alertadb_incremental(ultima_sincronizacao):
     está no banco alertadb.
     """
     # Formatar timestamp corretamente para PostgreSQL
+    # Se tem timezone, converter para string mantendo timezone
     if isinstance(ultima_sincronizacao, datetime):
-        timestamp_str = ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S')
+        if ultima_sincronizacao.tzinfo:
+            # Converter para string com timezone para PostgreSQL
+            offset = ultima_sincronizacao.tzinfo.utcoffset(ultima_sincronizacao)
+            horas_offset = int(offset.total_seconds() / 3600)
+            minutos_offset = int((offset.total_seconds() % 3600) / 60)
+            timestamp_str = ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S')
+            timestamp_str += f" {horas_offset:+03d}:{abs(minutos_offset):02d}"
+        else:
+            timestamp_str = ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S')
     else:
         timestamp_str = str(ultima_sincronizacao)
     
-    return f"""
+    # Usar timestamptz se o timestamp tem timezone, senão usar timestamp
+    if ':' in timestamp_str and ('+' in timestamp_str or '-' in timestamp_str.split()[-1]):
+        # Tem timezone, usar timestamptz
+        return f"""
+SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
+    el."horaLeitura" AS "Dia",
+    elc.m05,
+    elc.m10,
+    elc.m15,
+    elc.h01,
+    elc.h04,
+    elc.h24,
+    elc.h96,
+    ee.nome AS "Estacao",
+    el.estacao_id
+FROM public.estacoes_leitura AS el
+JOIN public.estacoes_leiturachuva AS elc
+    ON elc.leitura_id = el.id
+JOIN public.estacoes_estacao AS ee
+    ON ee.id = el.estacao_id
+WHERE el."horaLeitura" > '{timestamp_str}'::timestamptz
+ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
+"""
+    else:
+        # Sem timezone, usar timestamp
+        return f"""
 SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
     el."horaLeitura" AS "Dia",
     elc.m05,
@@ -261,48 +296,81 @@ def verificar_tabela_vazia():
         if conn_destino:
             conn_destino.close()
 
-def garantir_datetime(valor):
+def garantir_datetime_com_timezone(valor):
     """
-    Garante que o valor seja um objeto datetime naive (sem timezone).
-    Sempre retorna um datetime naive para evitar problemas de comparação.
-    O banco de dados já trata o ajuste de horário de verão na coluna dia.
+    Garante que o valor seja um objeto datetime mantendo o timezone original.
+    IMPORTANTE: Preserva o timezone original (-02:00 para horário de verão ou -03:00 para horário padrão).
+    Similar à função no script de carga inicial.
+    
+    Args:
+        valor: datetime, string ou outro tipo
+    
+    Returns:
+        datetime: datetime com timezone preservado (ou naive se não tinha timezone)
     """
     resultado = None
     
     if isinstance(valor, datetime):
-        # Se já é datetime, converter para naive se necessário
-        resultado = tornar_datetime_naive(valor)
+        # Se já é datetime, manter como está (preserva -02:00 ou -03:00)
+        resultado = valor
     elif isinstance(valor, str):
         try:
-            # Tentar remover timezone info primeiro
-            valor_limpo = re.sub(r'[+-]\d{2}:\d{2}$', '', valor)
-            valor_limpo = re.sub(r'[+-]\d{4}$', '', valor_limpo)  # Remove também formato +0000
-            valor_limpo = valor_limpo.strip()
+            # Tentar parse mantendo timezone se presente
+            # Formatos: "2025-11-28 11:40:00.000 -0300" ou "-0200" ou "-03:00" ou "-02:00"
             
-            formatos = [
-                '%Y-%m-%d %H:%M:%S.%f',
-                '%Y-%m-%d %H:%M:%S',
-                '%Y-%m-%dT%H:%M:%S.%f',
-                '%Y-%m-%dT%H:%M:%S',
-            ]
-            
-            for fmt in formatos:
-                try:
-                    resultado = datetime.strptime(valor_limpo, fmt)
-                    break
-                except ValueError:
-                    continue
-            
-            if resultado is None:
-                try:
-                    # Tentar usar fromisoformat e depois remover timezone
-                    valor_sem_tz = valor.split('+')[0].split('-')[0] if '+' in valor or (valor.count('-') > 2) else valor
-                    valor_sem_tz = re.sub(r'[+-]\d{2}:\d{2}$', '', valor_sem_tz)
-                    valor_sem_tz = re.sub(r'[+-]\d{4}$', '', valor_sem_tz)
-                    resultado = datetime.fromisoformat(valor_sem_tz.replace('T', ' ').split('.')[0])
-                    resultado = tornar_datetime_naive(resultado)
-                except:
-                    resultado = datetime.now() - timedelta(seconds=300)
+            # Tentar usar fromisoformat primeiro (preserva timezone automaticamente)
+            try:
+                valor_iso = valor.replace(' ', 'T', 1)
+                resultado = datetime.fromisoformat(valor_iso)
+            except:
+                # Parse manual preservando timezone
+                match_tz = re.search(r'\s*([+-])(\d{2}):?(\d{2})$', valor)
+                if match_tz:
+                    sinal = match_tz.group(1)
+                    horas_tz = int(match_tz.group(2))
+                    minutos_tz = int(match_tz.group(3))
+                    
+                    offset_total_minutos = horas_tz * 60 + minutos_tz
+                    if sinal == '-':
+                        offset_total_minutos = -offset_total_minutos
+                    
+                    valor_sem_tz = re.sub(r'\s*[+-]\d{2}:?\d{2}$', '', valor).strip()
+                    
+                    formatos = [
+                        '%Y-%m-%d %H:%M:%S.%f',
+                        '%Y-%m-%d %H:%M:%S',
+                        '%Y-%m-%dT%H:%M:%S.%f',
+                        '%Y-%m-%dT%H:%M:%S',
+                    ]
+                    
+                    dt_naive = None
+                    for fmt in formatos:
+                        try:
+                            dt_naive = datetime.strptime(valor_sem_tz, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if dt_naive:
+                        from datetime import timezone
+                        tz = timezone(timedelta(minutes=offset_total_minutos))
+                        resultado = dt_naive.replace(tzinfo=tz)
+                else:
+                    # Sem timezone, parse normal
+                    valor_limpo = valor.strip()
+                    formatos = [
+                        '%Y-%m-%d %H:%M:%S.%f',
+                        '%Y-%m-%d %H:%M:%S',
+                        '%Y-%m-%dT%H:%M:%S.%f',
+                        '%Y-%m-%dT%H:%M:%S',
+                    ]
+                    
+                    for fmt in formatos:
+                        try:
+                            resultado = datetime.strptime(valor_limpo, fmt)
+                            break
+                        except ValueError:
+                            continue
         except Exception:
             resultado = datetime.now() - timedelta(seconds=300)
     else:
@@ -314,11 +382,14 @@ def garantir_datetime(valor):
         except:
             resultado = datetime.now() - timedelta(seconds=300)
     
-    # Garantir que é naive (sem timezone)
-    if resultado:
-        return tornar_datetime_naive(resultado)
-    
-    return datetime.now() - timedelta(seconds=300)
+    return resultado if resultado else datetime.now() - timedelta(seconds=300)
+
+def garantir_datetime(valor):
+    """
+    Garante que o valor seja um objeto datetime mantendo o timezone original.
+    IMPORTANTE: Preserva timezone -02:00 (horário de verão) ou -03:00 (horário padrão).
+    """
+    return garantir_datetime_com_timezone(valor)
 
 def obter_ultima_sincronizacao():
     """Obtém o timestamp da última leitura sincronizada do banco de destino."""
@@ -334,10 +405,19 @@ def obter_ultima_sincronizacao():
         resultado = cur_destino.fetchone()
         
         if resultado and resultado[0]:
-            return garantir_datetime(resultado[0])
+            # Converter mantendo timezone se presente
+            dt = garantir_datetime_com_timezone(resultado[0])
+            # Se não tem timezone, adicionar -03:00 (padrão)
+            if dt.tzinfo is None:
+                from datetime import timezone
+                tz_brasilia = timezone(timedelta(hours=-3))
+                dt = dt.replace(tzinfo=tz_brasilia)
+            return dt
         else:
-            # Se não houver registros, retorna timestamp de 5 minutos atrás
-            return datetime.now() - timedelta(seconds=300)
+            # Se não houver registros, retorna timestamp de 5 minutos atrás com timezone
+            from datetime import timezone
+            tz_brasilia = timezone(timedelta(hours=-3))
+            return (datetime.now() - timedelta(seconds=300)).replace(tzinfo=tz_brasilia)
             
     except Exception as e:
         print(f'⚠️ Erro ao obter última sincronização: {e}')
@@ -372,7 +452,10 @@ def atualizar_dados_incrementais():
         ultima_sincronizacao = obter_ultima_sincronizacao()
         
         # Validar que temos uma data válida
-        if ultima_sincronizacao == datetime(1997, 1, 1) or ultima_sincronizacao < datetime(1997, 1, 1):
+        # Comparar removendo timezone para compatibilidade
+        ultima_sync_naive = ultima_sincronizacao.replace(tzinfo=None) if ultima_sincronizacao.tzinfo else ultima_sincronizacao
+        data_referencia = datetime(1997, 1, 1)
+        if ultima_sync_naive == data_referencia or ultima_sync_naive < data_referencia:
             print(f'\n⚠️  ATENÇÃO: Última sincronização não encontrada ou inválida!')
             print(f'   Execute PRIMEIRO o script carregar_pluviometricos_historicos.py')
             print(f'   para fazer a carga inicial dos dados históricos.')
@@ -398,28 +481,61 @@ def atualizar_dados_incrementais():
         # Conectar ao banco destino
         conn_destino = psycopg2.connect(**DESTINO)
         cur_destino = conn_destino.cursor()
+        
+        # Configurar timezone do banco destino para 'America/Sao_Paulo'
+        # Isso garante que timestamps com timezone sejam convertidos corretamente
+        cur_destino.execute("SET timezone = 'America/Sao_Paulo';")
 
-        # Garantir que os timestamps são datetime naive (sem timezone)
+        # IMPORTANTE: Preparar timestamps mantendo timezone para inserção correta
         # Formato dos dados: (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
+        # Preserva timezone original (-02:00 para horário de verão ou -03:00 para horário padrão)
         dados_ajustados = []
         for registro in dados:
             dia_original = registro[0]
-            # Garantir que é datetime naive (o banco já trata horário de verão)
-            dia_ajustado = garantir_datetime(dia_original)
-            # Criar nova tupla com o timestamp ajustado
+            
+            # Se já é datetime com timezone, manter como está (preserva -02:00 ou -03:00)
+            if isinstance(dia_original, datetime) and dia_original.tzinfo:
+                dia_ajustado = dia_original
+            elif isinstance(dia_original, datetime):
+                # Se é datetime sem timezone, converter para string e tentar parse novamente
+                dia_ajustado = garantir_datetime_com_timezone(str(dia_original))
+                if dia_ajustado.tzinfo is None:
+                    from datetime import timezone
+                    tz_brasilia = timezone(timedelta(hours=-3))
+                    dia_ajustado = dia_original.replace(tzinfo=tz_brasilia)
+            else:
+                # Converter mantendo timezone original (-02:00 ou -03:00)
+                dia_ajustado = garantir_datetime_com_timezone(dia_original)
+                if dia_ajustado.tzinfo is None:
+                    from datetime import timezone
+                    tz_brasilia = timezone(timedelta(hours=-3))
+                    dia_ajustado = dia_ajustado.replace(tzinfo=tz_brasilia)
+            
+            # Criar nova tupla com o timestamp ajustado (com timezone)
             registro_ajustado = (dia_ajustado,) + registro[1:]
             dados_ajustados.append(registro_ajustado)
 
-        # ⚠️ IMPORTANTE: ON CONFLICT DO NOTHING pois a query já garante apenas um registro
-        # por (dia, estacao_id) usando DISTINCT ON com ORDER BY id DESC (mais recente)
+        # ⚠️ IMPORTANTE: ON CONFLICT DO UPDATE para garantir que os dados sejam sempre atualizados
+        # com os valores corretos do banco origem, mesmo se já existirem dados incorretos
+        # A query já garante apenas um registro por (dia, estacao_id) usando DISTINCT ON
+        # com ORDER BY id DESC (mais recente)
         insert_sql = '''
         INSERT INTO pluviometricos
         (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
         VALUES %s
-        ON CONFLICT (dia, estacao_id) DO NOTHING;
+        ON CONFLICT (dia, estacao_id) 
+        DO UPDATE SET
+            m05 = EXCLUDED.m05,
+            m10 = EXCLUDED.m10,
+            m15 = EXCLUDED.m15,
+            h01 = EXCLUDED.h01,
+            h04 = EXCLUDED.h04,
+            h24 = EXCLUDED.h24,
+            h96 = EXCLUDED.h96,
+            estacao = EXCLUDED.estacao;
         '''
 
-        # Inserir dados ajustados (ON CONFLICT DO NOTHING evita duplicatas automaticamente)
+        # Inserir dados ajustados (ON CONFLICT DO UPDATE atualiza dados existentes com valores corretos)
         execute_values(cur_destino, insert_sql, dados_ajustados)
         conn_destino.commit()
         
@@ -430,8 +546,14 @@ def atualizar_dados_incrementais():
         ultimo_timestamp = cur_destino.fetchone()
         ultimo_ts_str = ""
         if ultimo_timestamp and ultimo_timestamp[0]:
-            ultimo_ts = garantir_datetime(ultimo_timestamp[0])
-            ultimo_ts_str = f". Último: {ultimo_ts.strftime('%Y-%m-%d %H:%M:%S')}"
+            ultimo_ts = garantir_datetime_com_timezone(ultimo_timestamp[0])
+            # Converter para string para exibição
+            if ultimo_ts.tzinfo:
+                offset = ultimo_ts.tzinfo.utcoffset(ultimo_ts)
+                horas_offset = int(offset.total_seconds() / 3600)
+                ultimo_ts_str = f". Último: {ultimo_ts.strftime('%Y-%m-%d %H:%M:%S')} {horas_offset:+03d}:00"
+            else:
+                ultimo_ts_str = f". Último: {ultimo_ts.strftime('%Y-%m-%d %H:%M:%S')}"
         
         print(f'   ✅ {total_inseridos:,} novo(s) registro(s) sincronizado(s){ultimo_ts_str} [{timestamp_atual}]')
         
@@ -493,12 +615,12 @@ def main(modo_continuo=True):
     else:
         print("   ✅ Executar uma única sincronização")
     print()
-    print("🔒 PROTEÇÕES CONTRA SOBREPOSIÇÃO:")
-    print("   ✅ ON CONFLICT DO NOTHING: Previne duplicatas e sobreposição")
+    print("🔒 PROTEÇÕES E ATUALIZAÇÕES:")
+    print("   ✅ ON CONFLICT DO UPDATE: Atualiza dados existentes com valores corretos")
     print("   ✅ Chave primária (dia, estacao_id): Garante unicidade")
-    print("   ✅ NUNCA modifica dados existentes")
-    print("   ✅ NUNCA deleta dados")
-    print("   ✅ APENAS adiciona novos registros")
+    print("   ✅ Atualiza dados existentes se houver mudanças no banco origem")
+    print("   ✅ Garante que os dados no destino correspondam exatamente ao banco origem")
+    print("   ✅ Adiciona novos registros e atualiza existentes quando necessário")
     print()
     print("⚠️  PRÉ-REQUISITO:")
     print("   ⚠️  Certifique-se de ter executado carregar_pluviometricos_historicos.py PRIMEIRO")
