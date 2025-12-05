@@ -104,6 +104,101 @@ python scripts/consultar_alertadb_cor.py [data_inicial] [data_final] [estacao_id
 
 ---
 
+### `copiar_tabela_pluviometricos.py`
+**Copia tabela pluviometricos entre bancos**
+
+- Copia a tabela completa (estrutura e dados) entre bancos PostgreSQL
+- Útil para migração ou sincronização entre ambientes
+- Processa dados em lotes para otimizar memória
+- Usa ON CONFLICT DO UPDATE para tratar duplicatas
+- Configuração via arquivo .env
+
+**Uso:**
+```bash
+python scripts/copiar_tabela_pluviometricos.py
+```
+
+**Configuração (.env):**
+```env
+# Banco ORIGEM para CÓPIA (alertadb_cor)
+DB_COPIA_ORIGEM_HOST=10.50.30.166
+DB_COPIA_ORIGEM_PORT=5432
+DB_COPIA_ORIGEM_NAME=alertadb_cor
+DB_COPIA_ORIGEM_USER=postgres
+DB_COPIA_ORIGEM_PASSWORD=
+
+# Banco DESTINO para CÓPIA (alertadb)
+DB_COPIA_DESTINO_HOST=82.25.74.207
+DB_COPIA_DESTINO_PORT=7077
+DB_COPIA_DESTINO_NAME=alertadb
+DB_COPIA_DESTINO_USER=postgres
+DB_COPIA_DESTINO_PASSWORD=
+```
+
+**⚠️ IMPORTANTE:** Este script usa variáveis específicas com prefixo `DB_COPIA_*` 
+para não conflitar com as variáveis `DB_ORIGEM_*` e `DB_DESTINO_*` usadas em 
+outros scripts do projeto.
+
+---
+
+### `exportar_pluviometricos_parquet.py`
+**Exporta tabela pluviometricos para arquivos Parquet**
+
+- Exporta dados da tabela pluviometricos para formato Parquet (comprimido)
+- Útil para backup, transferência de dados ou análise offline
+- Pode dividir dados por ano ou exportar tudo em um arquivo
+- Formato eficiente e comprimido (menor tamanho que CSV)
+- Configuração via arquivo .env
+
+**Uso:**
+```bash
+python scripts/exportar_pluviometricos_parquet.py
+```
+
+**Configuração (.env):**
+```env
+# Banco ORIGEM para EXPORTAÇÃO (alertadb_cor)
+DB_COPIA_ORIGEM_HOST=10.50.30.166
+DB_COPIA_ORIGEM_PORT=5432
+DB_COPIA_ORIGEM_NAME=alertadb_cor
+DB_COPIA_ORIGEM_USER=postgres
+DB_COPIA_ORIGEM_PASSWORD=
+```
+
+**Dependências:**
+```bash
+pip install pandas pyarrow
+```
+
+**Arquivos gerados:**
+- `exports/pluviometricos_YYYY.parquet` (se dividir por ano)
+- `exports/pluviometricos_completo.parquet` (se exportar tudo)
+
+---
+
+### `zipar_exports_parquet.py`
+**Compacta arquivos Parquet em ZIP**
+
+- Compacta todos os arquivos .parquet da pasta exports/ em arquivo(s) ZIP
+- Útil para backup, transferência ou compartilhamento dos dados
+- Opção de compactar tudo em um ZIP ou dividir por década
+- Mostra estatísticas de compressão (tamanho antes/depois)
+
+**Uso:**
+```bash
+python scripts/zipar_exports_parquet.py
+```
+
+**Opções:**
+1. Um único arquivo ZIP (todos os arquivos)
+2. Dividir por década (1990s, 2000s, 2010s, 2020s)
+
+**Arquivos gerados:**
+- `exports/pluviometricos_export_YYYYMMDD_HHMMSS.zip` (opção 1)
+- `exports/pluviometricos_1990s.zip`, `pluviometricos_2000s.zip`, etc. (opção 2)
+
+---
+
 ## 📂 Estrutura
 
 ```
@@ -115,7 +210,10 @@ scripts/
 ├── dashboard.html                         # ⭐ Dashboard web
 ├── validar_dados_pluviometricos.py       # 🔧 Validação
 ├── corrigir_dados_pluviometricos.py      # 🔧 Correção
-└── consultar_alertadb_cor.py             # 🔧 Consulta
+├── consultar_alertadb_cor.py             # 🔧 Consulta
+├── copiar_tabela_pluviometricos.py       # 🔧 Cópia entre bancos
+├── exportar_pluviometricos_parquet.py    # 🔧 Exportação para Parquet
+└── zipar_exports_parquet.py              # 🔧 Compactação ZIP
 ```
 
 ---

@@ -46,6 +46,11 @@ python-dateutil
 # Requisições HTTP (se precisar fazer requests externos)
 requests
 
+# Manipulação de dados e exportação
+pandas
+pyarrow
+sqlalchemy
+
 # ============================================================================
 # MONITORAMENTO E LOGS (OPCIONAL)
 # ============================================================================

@@ -29,6 +29,10 @@ wheels/
 logs/
 *.log
 
+# Exports (arquivos Parquet gerados)
+exports/
+*.parquet
+
 # IDEs
 .vscode/
 .idea/

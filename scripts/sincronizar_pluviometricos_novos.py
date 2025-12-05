@@ -103,6 +103,7 @@ Variáveis opcionais:
 
 # 🔧 Importar bibliotecas necessárias
 import psycopg2
+from psycopg2 import errors as psycopg2_errors
 from psycopg2.extras import execute_values
 import time
 import os
@@ -274,27 +275,65 @@ def testar_conexoes():
         return False
 
 def verificar_tabela_vazia():
-    """Verifica se a tabela pluviometricos está vazia."""
+    """Verifica se a tabela pluviometricos está vazia.
+    
+    Usa EXISTS com LIMIT 1 para ser muito mais rápido que COUNT(*) em tabelas grandes.
+    Também trata erros de conexão e tenta reconectar.
+    """
     conn_destino = None
     cur_destino = None
+    max_tentativas = 3
     
-    try:
-        conn_destino = psycopg2.connect(**DESTINO)
-        cur_destino = conn_destino.cursor()
-        
-        cur_destino.execute("SELECT COUNT(*) FROM pluviometricos;")
-        resultado = cur_destino.fetchone()
-        
-        return resultado[0] == 0 if resultado else True
+    for tentativa in range(max_tentativas):
+        try:
+            conn_destino = psycopg2.connect(**DESTINO)
+            cur_destino = conn_destino.cursor()
             
-    except Exception as e:
-        print(f'⚠️ Erro ao verificar tabela: {e}')
-        return True
-    finally:
-        if cur_destino:
-            cur_destino.close()
-        if conn_destino:
-            conn_destino.close()
+            # Usar EXISTS é muito mais rápido que COUNT(*) em tabelas grandes
+            # Adiciona timeout de 5 segundos para a query
+            cur_destino.execute("SET statement_timeout = '5s';")
+            cur_destino.execute("SELECT EXISTS(SELECT 1 FROM pluviometricos LIMIT 1);")
+            resultado = cur_destino.fetchone()
+            
+            # EXISTS retorna True se há pelo menos um registro, False se vazia
+            return not resultado[0] if resultado else True
+                
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            # Erro de conexão - tentar reconectar
+            if tentativa < max_tentativas - 1:
+                print(f'⚠️ Erro de conexão (tentativa {tentativa + 1}/{max_tentativas}): {e}')
+                print('   Tentando reconectar em 2 segundos...')
+                import time
+                time.sleep(2)
+                continue
+            else:
+                print(f'⚠️ Erro ao verificar tabela após {max_tentativas} tentativas: {e}')
+                print('   Assumindo que a tabela não está vazia para continuar...')
+                return False  # Assumir que não está vazia para não bloquear sincronização
+                
+        except psycopg2_errors.QueryCanceled:
+            print('⚠️ Timeout ao verificar tabela. Assumindo que a tabela não está vazia.')
+            return False
+            
+        except Exception as e:
+            print(f'⚠️ Erro ao verificar tabela: {e}')
+            # Em caso de erro desconhecido, assumir que não está vazia para não bloquear
+            return False
+            
+        finally:
+            if cur_destino:
+                try:
+                    cur_destino.close()
+                except:
+                    pass
+            if conn_destino:
+                try:
+                    conn_destino.close()
+                except:
+                    pass
+    
+    # Se chegou aqui, todas as tentativas falharam
+    return False  # Assumir que não está vazia para continuar
 
 def garantir_datetime_com_timezone(valor):
     """
