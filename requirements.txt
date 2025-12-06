@@ -1,9 +1,8 @@
-
 # ============================================================================
-# 🌧️ REQUIREMENTS.TXT - API + ETL DADOS PLUVIOMÉTRICOS e METEOROLÓGICOS
+# REQUIREMENTS.TXT - API + ETL DADOS PLUVIOMETRICOS e METEOROLOGICOS
 # ============================================================================
 # 
-# Sistema completo para sincronização e API REST de dados pluviométricos
+# Sistema completo para sincronizacao e API REST de dados pluviometricos
 # Servidor: 10.50.30.166
 # Python: 3.8+
 #
@@ -16,7 +15,7 @@ Flask
 Werkzeug
 
 # ============================================================================
-# CORS - Permitir requisições cross-origin
+# CORS - Permitir requisicoes cross-origin
 # ============================================================================
 Flask-CORS
 
@@ -28,25 +27,25 @@ psycopg2-binary
 psycopg2
 
 # ============================================================================
-# SERVIDOR WSGI PARA PRODUÇÃO
+# SERVIDOR WSGI PARA PRODUCAO
 # ============================================================================
 gunicorn
 
 # ============================================================================
-# VARIÁVEIS DE AMBIENTE
+# VARIAVEIS DE AMBIENTE
 # ============================================================================
 python-dotenv
 
 # ============================================================================
-# UTILITÁRIOS
+# UTILITARIOS
 # ============================================================================
-# Manipulação de datas
+# Manipulacao de datas
 python-dateutil
 
-# Requisições HTTP (se precisar fazer requests externos)
+# Requisicoes HTTP (se precisar fazer requests externos)
 requests
 
-# Manipulação de dados e exportação
+# Manipulacao de dados e exportacao
 pandas
 pyarrow
 sqlalchemy
@@ -61,12 +60,12 @@ python-json-logger
 psutil
 
 # ============================================================================
-# SEGURANÇA (OPCIONAL)
+# SEGURANCA (OPCIONAL)
 # ============================================================================
 # Rate limiting para API
 Flask-Limiter
 
-# Validação de dados
+# Validacao de dados
 marshmallow
 
 # ============================================================================
@@ -74,4 +73,3 @@ marshmallow
 # ============================================================================
 pytest
 pytest-cov
-pytest
