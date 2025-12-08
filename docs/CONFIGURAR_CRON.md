@@ -67,52 +67,6 @@ crontab -l
 
 ---
 
-## 🪟 Passo a Passo - Windows
-
-### Usando o Agendador de Tarefas do Windows
-
-1. **Abra o Agendador de Tarefas:**
-   - Pressione `Win + R`
-   - Digite `taskschd.msc` e pressione Enter
-
-2. **Crie uma nova tarefa:**
-   - Clique em "Criar Tarefa..." (não "Criar Tarefa Básica")
-
-3. **Na aba "Geral":**
-   - Nome: `Sincronização Pluviométricos`
-   - Descrição: `Sincroniza dados pluviométricos a cada 5 minutos`
-   - Marque: "Executar se o usuário estiver conectado ou não"
-   - Marque: "Executar com privilégios mais altos"
-
-4. **Na aba "Gatilhos":**
-   - Clique em "Novo..."
-   - Iniciar tarefa: `Em um agendamento`
-   - Configurações: `Recorrente`
-   - Repetir a cada: `5 minutos`
-   - Duração: `Indefinidamente`
-   - Clique em "OK"
-
-5. **Na aba "Ações":**
-   - Clique em "Novo..."
-   - Ação: `Iniciar um programa`
-   - Programa/script: Caminho para o PowerShell (ex: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`)
-   - Adicionar argumentos: `-ExecutionPolicy Bypass -File "C:\caminho\completo\para\automacao\cron_windows.ps1"`
-   - Clique em "OK"
-
-6. **Na aba "Condições":**
-   - Desmarque: "Iniciar a tarefa somente se o computador estiver em energia CA"
-   - Marque: "Acordar o computador para executar esta tarefa"
-
-7. **Na aba "Configurações":**
-   - Marque: "Permitir execução da tarefa sob demanda"
-   - Marque: "Executar tarefa o mais rápido possível após uma execução agendada ser perdida"
-   - Se a tarefa falhar, reiniciar a cada: `1 minuto`
-   - Tentar novamente até: `3 vezes`
-
-8. **Clique em "OK"** e informe a senha do usuário se solicitado
-
----
-
 ## 🔍 Verificação e Monitoramento
 
 ### Verificar Logs (Linux)
@@ -127,32 +81,13 @@ ls -lt logs/ | head -5
 tail -f logs/sincronizacao_*.log | tail -20
 ```
 
-### Verificar Logs (Windows)
-
-Os logs são salvos em `logs\sincronizacao_YYYYMMDD_HHMMSS.log`:
-
-```powershell
-# Ver último log criado
-Get-ChildItem logs\ | Sort-Object LastWriteTime -Descending | Select-Object -First 5
-
-# Ver conteúdo do último log
-Get-Content logs\sincronizacao_*.log | Select-Object -Last 20
-```
-
 ### Testar Execução Manual
 
 Antes de confiar no cron, teste manualmente:
 
-**Linux:**
 ```bash
 cd /caminho/do/projeto
 python3 scripts/sincronizar_pluviometricos_novos.py --once
-```
-
-**Windows:**
-```powershell
-cd C:\caminho\do\projeto
-python scripts\sincronizar_pluviometricos_novos.py --once
 ```
 
 ---
@@ -161,7 +96,7 @@ python scripts\sincronizar_pluviometricos_novos.py --once
 
 ### Alterar Intervalo de Execução
 
-**Linux:** Edite o crontab:
+Edite o crontab:
 ```bash
 crontab -e
 ```
@@ -171,8 +106,6 @@ Altere o intervalo (exemplos):
 - A cada 5 minutos: `*/5 * * * *` (padrão)
 - A cada 10 minutos: `*/10 * * * *`
 - A cada hora: `0 * * * *`
-
-**Windows:** No Agendador de Tarefas, altere o intervalo na aba "Gatilhos"
 
 ### Usar Variável de Ambiente para Intervalo
 
@@ -284,12 +217,6 @@ crontab -e
 ```bash
 crontab -r  # ⚠️ Remove TODAS as entradas do crontab
 ```
-
-### Windows
-
-1. Abra o Agendador de Tarefas
-2. Encontre a tarefa `Sincronização Pluviométricos`
-3. Clique com botão direito → "Excluir"
 
 ---
 

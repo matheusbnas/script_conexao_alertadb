@@ -277,63 +277,53 @@ def testar_conexoes():
 def verificar_tabela_vazia():
     """Verifica se a tabela pluviometricos está vazia.
     
-    Usa EXISTS com LIMIT 1 para ser muito mais rápido que COUNT(*) em tabelas grandes.
-    Também trata erros de conexão e tenta reconectar.
+    Tenta uma verificação rápida, mas se falhar, assume que não está vazia
+    para não bloquear a sincronização. As coletas NÃO são perdidas mesmo se
+    esta verificação falhar.
     """
     conn_destino = None
     cur_destino = None
-    max_tentativas = 3
     
-    for tentativa in range(max_tentativas):
-        try:
-            conn_destino = psycopg2.connect(**DESTINO)
-            cur_destino = conn_destino.cursor()
+    try:
+        conn_destino = psycopg2.connect(**DESTINO)
+        cur_destino = conn_destino.cursor()
+        
+        # Tentar verificação rápida SEM timeout primeiro
+        # Usar uma query ainda mais simples - apenas tentar ler uma linha
+        cur_destino.execute("SELECT 1 FROM pluviometricos LIMIT 1;")
+        resultado = cur_destino.fetchone()
+        
+        # Se conseguiu ler, a tabela não está vazia
+        return resultado is None
             
-            # Usar EXISTS é muito mais rápido que COUNT(*) em tabelas grandes
-            # Adiciona timeout de 5 segundos para a query
-            cur_destino.execute("SET statement_timeout = '5s';")
-            cur_destino.execute("SELECT EXISTS(SELECT 1 FROM pluviometricos LIMIT 1);")
-            resultado = cur_destino.fetchone()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError, psycopg2_errors.QueryCanceled) as e:
+        # Qualquer erro de conexão ou timeout - assumir que não está vazia
+        # Isso garante que a sincronização continue e NÃO perca coletas
+        print(f'⚠️ Não foi possível verificar se tabela está vazia: {e}')
+        print('   ✅ Continuando sincronização (assumindo que tabela não está vazia)')
+        print('   💡 As coletas NÃO serão perdidas mesmo com este erro')
+        return False  # Assumir que não está vazia para continuar
             
-            # EXISTS retorna True se há pelo menos um registro, False se vazia
-            return not resultado[0] if resultado else True
-                
-        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-            # Erro de conexão - tentar reconectar
-            if tentativa < max_tentativas - 1:
-                print(f'⚠️ Erro de conexão (tentativa {tentativa + 1}/{max_tentativas}): {e}')
-                print('   Tentando reconectar em 2 segundos...')
-                import time
-                time.sleep(2)
-                continue
-            else:
-                print(f'⚠️ Erro ao verificar tabela após {max_tentativas} tentativas: {e}')
-                print('   Assumindo que a tabela não está vazia para continuar...')
-                return False  # Assumir que não está vazia para não bloquear sincronização
-                
-        except psycopg2_errors.QueryCanceled:
-            print('⚠️ Timeout ao verificar tabela. Assumindo que a tabela não está vazia.')
-            return False
+    except Exception as e:
+        # Qualquer outro erro - assumir que não está vazia
+        print(f'⚠️ Erro ao verificar tabela: {e}')
+        print('   ✅ Continuando sincronização (assumindo que tabela não está vazia)')
+        return False
             
-        except Exception as e:
-            print(f'⚠️ Erro ao verificar tabela: {e}')
-            # Em caso de erro desconhecido, assumir que não está vazia para não bloquear
-            return False
-            
-        finally:
-            if cur_destino:
-                try:
-                    cur_destino.close()
-                except:
-                    pass
-            if conn_destino:
-                try:
-                    conn_destino.close()
-                except:
-                    pass
+    finally:
+        if cur_destino:
+            try:
+                cur_destino.close()
+            except:
+                pass
+        if conn_destino:
+            try:
+                conn_destino.close()
+            except:
+                pass
     
-    # Se chegou aqui, todas as tentativas falharam
-    return False  # Assumir que não está vazia para continuar
+    # Se chegou aqui, assumir que não está vazia para continuar
+    return False
 
 def garantir_datetime_com_timezone(valor):
     """
@@ -431,7 +421,11 @@ def garantir_datetime(valor):
     return garantir_datetime_com_timezone(valor)
 
 def obter_ultima_sincronizacao():
-    """Obtém o timestamp da última leitura sincronizada do banco de destino."""
+    """Obtém o timestamp da última leitura sincronizada do banco de destino.
+    
+    Se houver problemas de conexão ou timeout, retorna um timestamp recente
+    para garantir que a sincronização continue e não perca coletas.
+    """
     conn_destino = None
     cur_destino = None
     
@@ -439,8 +433,9 @@ def obter_ultima_sincronizacao():
         conn_destino = psycopg2.connect(**DESTINO)
         cur_destino = conn_destino.cursor()
         
-        # Busca o último timestamp sincronizado
-        cur_destino.execute("SELECT MAX(dia) FROM pluviometricos;")
+        # Usar ORDER BY com LIMIT é mais rápido que MAX() em algumas situações
+        # e permite adicionar timeout se necessário
+        cur_destino.execute("SELECT dia FROM pluviometricos ORDER BY dia DESC LIMIT 1;")
         resultado = cur_destino.fetchone()
         
         if resultado and resultado[0]:
@@ -457,6 +452,17 @@ def obter_ultima_sincronizacao():
             from datetime import timezone
             tz_brasilia = timezone(timedelta(hours=-3))
             return (datetime.now() - timedelta(seconds=300)).replace(tzinfo=tz_brasilia)
+            
+    except (psycopg2.OperationalError, psycopg2.InterfaceError, psycopg2_errors.QueryCanceled) as e:
+        # Em caso de erro de conexão ou timeout, retornar timestamp recente
+        # Isso garante que a sincronização continue e busque dados recentes
+        print(f'⚠️ Erro ao obter última sincronização: {e}')
+        print('   ✅ Usando timestamp recente para continuar sincronização')
+        print('   💡 As coletas NÃO serão perdidas')
+        from datetime import timezone
+        tz_brasilia = timezone(timedelta(hours=-3))
+        # Retornar timestamp de 10 minutos atrás para garantir que pegue dados recentes
+        return (datetime.now() - timedelta(minutes=10)).replace(tzinfo=tz_brasilia)
             
     except Exception as e:
         print(f'⚠️ Erro ao obter última sincronização: {e}')

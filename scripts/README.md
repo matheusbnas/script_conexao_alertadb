@@ -28,7 +28,7 @@ python scripts/carregar_pluviometricos_historicos.py
 - Mantém os dados atualizados automaticamente
 - Executa continuamente verificando novos dados a cada 5 minutos
 - Deve ser executado **APÓS** a carga inicial
-- Pode ser executado via cron/agendador de tarefas
+- Pode ser executado via cron
 
 **Uso:**
 ```bash

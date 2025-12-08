@@ -17,9 +17,9 @@ projeto/
 │
 ├── automacao/                        # Scripts de automação
 │   ├── cron_linux.sh                 # Script cron para Linux
-│   ├── cron_windows.bat              # Script cron para Windows (batch)
-│   ├── cron_windows.ps1              # Script cron para Windows (PowerShell)
+│   ├── cron_cloudsql.sh              # Script cron para Cloud SQL
 │   ├── configurar_cron_linux.sh      # Helper para configurar cron
+│   ├── configurar_cron_cloudsql.sh   # Helper para configurar cron Cloud SQL
 │   ├── prefect_flow.py               # Flow Prefect para automação
 │   └── prefect_deployment.py         # Deployment Prefect
 │
@@ -105,10 +105,6 @@ chmod +x automacao/cron_linux.sh
 crontab -e
 # Adicione: */5 * * * * /caminho/completo/para/automacao/cron_linux.sh
 ```
-
-#### Windows
-
-Use o Agendador de Tarefas do Windows com `automacao/cron_windows.ps1` ou `automacao/cron_windows.bat`.
 
 📚 **Documentação completa:** Veja [`docs/CONFIGURAR_CRON.md`](docs/CONFIGURAR_CRON.md) ou [`automacao/GUIA_RAPIDO_CRON.md`](automacao/GUIA_RAPIDO_CRON.md)
 
@@ -204,9 +200,9 @@ API_KEY=sua_chave_secreta_aqui
 - `cron_linux.sh` - Script para cron
 - `configurar_cron_linux.sh` - Helper para configurar cron automaticamente
 
-#### Windows
-- `cron_windows.bat` - Script batch para Task Scheduler
-- `cron_windows.ps1` - Script PowerShell para Task Scheduler
+#### Cloud SQL
+- `cron_cloudsql.sh` - Script para cron Cloud SQL
+- `configurar_cron_cloudsql.sh` - Helper para configurar cron Cloud SQL
 
 #### Prefect
 - `prefect_flow.py` - Flow Prefect para orquestração
@@ -227,8 +223,6 @@ API_KEY=sua_chave_secreta_aqui
 3. Configurar Automação (escolha uma opção)
    ├── Cron Linux (Recomendado): 
    │   └── cd automacao && ./configurar_cron_linux.sh
-   ├── Task Scheduler Windows: 
-   │   └── Use automacao/cron_windows.ps1 ou .bat
    └── Prefect: 
        └── automacao/prefect_flow.py
 

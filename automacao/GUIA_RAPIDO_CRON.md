@@ -47,22 +47,6 @@ crontab -e
 
 ---
 
-## 🪟 Configuração Rápida (Windows)
-
-1. Abra o **Agendador de Tarefas** (`Win + R` → `taskschd.msc`)
-2. Clique em **"Criar Tarefa..."**
-3. **Geral:**
-   - Nome: `Sincronização Pluviométricos`
-   - Marque: "Executar se o usuário estiver conectado ou não"
-4. **Gatilhos:**
-   - Novo → Recorrente → A cada 5 minutos → Indefinidamente
-5. **Ações:**
-   - Novo → Programa: `powershell.exe`
-   - Argumentos: `-ExecutionPolicy Bypass -File "C:\caminho\completo\para\automacao\cron_windows.ps1"`
-6. **Salvar** e informar senha se solicitado
-
----
-
 ## 🧪 Testar Antes de Configurar
 
 ```bash

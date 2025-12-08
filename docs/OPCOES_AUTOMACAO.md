@@ -9,7 +9,6 @@ Este documento apresenta diferentes opções para automatizar a execução do `a
 | Solução | Complexidade | Interface Visual | Retry Automático | Logs Detalhados | Custo |
 |---------|--------------|------------------|------------------|-----------------|-------|
 | **Cron (Linux)** | ⭐ Simples | ❌ Não | ❌ Não | ⚠️ Básico | ✅ Grátis |
-| **Task Scheduler (Windows)** | ⭐ Simples | ✅ Sim | ❌ Não | ⚠️ Básico | ✅ Grátis |
 | **Prefect** | ⭐⭐⭐ Média | ✅ Sim | ✅ Sim | ✅ Avançado | ✅ Grátis (open-source) |
 | **APScheduler** | ⭐⭐ Média | ❌ Não | ⚠️ Manual | ⚠️ Básico | ✅ Grátis |
 | **Script Loop + Systemd** | ⭐⭐ Média | ❌ Não | ✅ Sim | ⚠️ Básico | ✅ Grátis |
@@ -26,7 +25,6 @@ Este documento apresenta diferentes opções para automatizar a execução do `a
 - **Fácil manutenção**: Crontab é bem documentado
 
 ### ❌ Desvantagens:
-- **Apenas Linux/Unix**: Não funciona nativamente no Windows
 - **Sem retry automático**: Se falhar, precisa esperar próximo ciclo
 - **Sem interface visual**: Tudo via linha de comando
 - **Logs básicos**: Precisa configurar redirecionamento manual
@@ -44,33 +42,7 @@ Este documento apresenta diferentes opções para automatizar a execução do `a
 
 ---
 
-## 2️⃣ TASK SCHEDULER (Windows) - ⭐ RECOMENDADO PARA WINDOWS
-
-### ✅ Vantagens:
-- **Nativo do Windows**: Já vem instalado
-- **Interface gráfica**: Fácil de configurar visualmente
-- **Simples**: Clicar e arrastar
-- **Logs**: Pode ver histórico de execuções
-- **Sem dependências**: Não precisa instalar nada
-
-### ❌ Desvantagens:
-- **Apenas Windows**: Não funciona em Linux
-- **Sem retry automático**: Se falhar, espera próximo ciclo
-- **Interface pode ser confusa**: Muitas opções avançadas
-
-### 📝 Como Funciona:
-1. Abrir "Agendador de Tarefas" do Windows
-2. Criar nova tarefa
-3. Configurar para executar `cron_windows.bat` a cada 5 minutos
-
-### 💡 Quando Usar:
-- Ambiente Windows
-- Prefere interface gráfica
-- Solução simples e nativa
-
----
-
-## 3️⃣ PREFECT - ⭐ RECOMENDADO PARA PRODUÇÃO AVANÇADA
+## 2️⃣ PREFECT - ⭐ RECOMENDADO PARA PRODUÇÃO AVANÇADA
 
 ### ✅ Vantagens:
 - **Interface web moderna**: Dashboard visual bonito
@@ -119,7 +91,7 @@ def sync_pluviometricos_flow():
 
 ---
 
-## 4️⃣ APSCHEDULER (Python) - ⭐ ALTERNATIVA PYTHON SIMPLES
+## 3️⃣ APSCHEDULER (Python) - ⭐ ALTERNATIVA PYTHON SIMPLES
 
 ### ✅ Vantagens:
 - **Python puro**: Tudo em Python, fácil de integrar
@@ -148,7 +120,7 @@ scheduler.start()
 
 ---
 
-## 5️⃣ SCRIPT LOOP + SYSTEMD (Linux) - ⭐ SERVIÇO DO SISTEMA
+## 4️⃣ SCRIPT LOOP + SYSTEMD (Linux) - ⭐ SERVIÇO DO SISTEMA
 
 ### ✅ Vantagens:
 - **Serviço do sistema**: Inicia automaticamente com o sistema
@@ -157,7 +129,6 @@ scheduler.start()
 - **Confiável**: Reinicia automaticamente se falhar
 
 ### ❌ Desvantagens:
-- **Apenas Linux**: Não funciona no Windows
 - **Mais complexo**: Precisa criar arquivo .service
 - **Sem interface visual**: Tudo via linha de comando
 
@@ -185,8 +156,7 @@ WantedBy=multi-user.target
 ## 🎯 MINHA RECOMENDAÇÃO
 
 ### Para Começar (Simples):
-1. **Windows**: Use Task Scheduler com `cron_windows.bat`
-2. **Linux**: Use Cron com `cron_linux.sh`
+1. **Cron (Linux)**: Use Cron com `cron_linux.sh` - Simples e confiável
 
 ### Para Produção (Avançado):
 1. **Prefect**: Se precisa de monitoramento visual e retry automático
@@ -196,13 +166,10 @@ WantedBy=multi-user.target
 
 ## 📋 Próximos Passos
 
-Escolha uma opção e eu crio os arquivos necessários:
+Escolha uma opção e configure:
 
 1. **Cron (Linux)** - Scripts prontos, só ajustar caminhos
-2. **Task Scheduler (Windows)** - Scripts prontos, só configurar no Windows
-3. **Prefect** - Criar flow completo com interface web
-4. **APScheduler** - Script Python simples com agendamento
-5. **Systemd** - Criar serviço do sistema Linux
-
-Qual opção você prefere? Ou quer que eu crie todas e você escolhe depois?
+2. **Prefect** - Criar flow completo com interface web
+3. **APScheduler** - Script Python simples com agendamento
+4. **Systemd** - Criar serviço do sistema Linux
 

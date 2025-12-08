@@ -177,24 +177,6 @@ sudo systemctl status pluviometricos-api
 
 ---
 
-## 🪟 Windows - Manter Rodando
-
-### Opção 1: Janela do PowerShell
-Mantenha a janela aberta enquanto o dashboard estiver em uso.
-
-### Opção 2: Task Scheduler
-Configure para iniciar automaticamente quando o Windows iniciar.
-
-### Opção 3: Serviço Windows (NSSM)
-```bash
-# Baixe NSSM: https://nssm.cc/download
-nssm install PluviometricosAPI
-# Configure o caminho do Python e do script
-nssm start PluviometricosAPI
-```
-
----
-
 ## ✅ Verificar se Está Funcionando
 
 1. **Health Check:**
@@ -221,16 +203,10 @@ nssm start PluviometricosAPI
 
 ### Erro: "Port already in use"
 ```bash
-# Windows: Encontrar processo usando a porta
-netstat -ano | findstr :5000
-
-# Linux: Encontrar processo usando a porta
+# Encontrar processo usando a porta
 lsof -i :5000
 
 # Matar processo (substitua PID pelo número encontrado)
-# Windows:
-taskkill /PID [PID] /F
-# Linux:
 kill -9 [PID]
 ```
 
@@ -269,5 +245,5 @@ O Flask já está configurado com `CORS(app)`, então não deve haver problemas 
 
 ---
 
-**Última atualização:** 2024
+**Última atualização:** 2025
 

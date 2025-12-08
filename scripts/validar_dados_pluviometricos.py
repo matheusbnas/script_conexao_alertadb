@@ -10,7 +10,7 @@ import psycopg2
 from dotenv import load_dotenv
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Carregar variáveis de ambiente
 project_root = Path(__file__).parent.parent
@@ -79,8 +79,53 @@ def query_dados_origem(data_inicial=None, data_final=None, estacao_id=None):
     ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
     """
 
+def normalizar_valor(val):
+    """Normaliza valores para comparação (None, float, Decimal -> float ou None).
+    
+    Usa a mesma lógica do script de carregamento para garantir comparação correta.
+    """
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return val
+
+def normalizar_timestamp(ts):
+    """Normaliza timestamp removendo timezone para comparação.
+    
+    Usa a mesma lógica do script de carregamento - remove timezone mantendo valor local.
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        # Remover timezone mantendo valor local (não converter para UTC)
+        return ts.replace(tzinfo=None) if ts.tzinfo else ts
+    return ts
+
+def valores_iguais(orig, dest):
+    """Compara dois valores considerando precisão de float.
+    
+    Usa tolerância para evitar falsos positivos por diferenças mínimas de precisão.
+    """
+    if orig is None and dest is None:
+        return True
+    if orig is None or dest is None:
+        return False
+    try:
+        # Comparar floats com tolerância de 0.0001 (mesma lógica dos testes)
+        return abs(float(orig) - float(dest)) <= 0.0001
+    except (TypeError, ValueError):
+        return orig == dest
+
 def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=100):
-    """Valida que os dados no destino correspondem aos dados do banco origem."""
+    """Valida que os dados no destino correspondem aos dados do banco origem.
+    
+    Usa a mesma lógica do script carregar_pluviometricos_historicos.py:
+    - DISTINCT ON para garantir unicidade
+    - Normalização de valores (Decimal -> float)
+    - Comparação de timestamps sem timezone
+    """
     
     conn_origem = None
     cur_origem = None
@@ -112,8 +157,8 @@ def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=10
         print("   Conexoes estabelecidas com sucesso!")
         print()
         
-        # Buscar dados do banco origem
-        print("Buscando dados do banco ORIGEM...")
+        # Buscar dados do banco origem usando DISTINCT ON (mesma lógica do carregamento)
+        print("Buscando dados do banco ORIGEM (usando DISTINCT ON como no carregamento)...")
         query_origem = query_dados_origem(data_inicial, data_final, estacao_id)
         cur_origem.execute(query_origem)
         dados_origem = cur_origem.fetchall()
@@ -135,16 +180,23 @@ def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=10
         total_validados = 0
         
         for registro_origem in dados_origem:
-            dia, m05_origem, m10_origem, m15_origem, h01_origem, h04_origem, h24_origem, h96_origem, estacao, est_id = registro_origem
+            dia_orig, m05_origem, m10_origem, m15_origem, h01_origem, h04_origem, h24_origem, h96_origem, estacao, est_id = registro_origem
+            
+            # Normalizar timestamp para busca (remover timezone se presente)
+            dia_normalizado = normalizar_timestamp(dia_orig)
             
             # Buscar registro correspondente no destino
+            # Usar comparação com margem de tempo para evitar problemas de timezone
             query_destino = """
             SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
             FROM pluviometricos
-            WHERE dia = %s::timestamp AND estacao_id = %s;
+            WHERE dia >= %s::timestamp - INTERVAL '1 second'
+              AND dia <= %s::timestamp + INTERVAL '1 second'
+              AND estacao_id = %s
+            LIMIT 1;
             """
             
-            cur_destino.execute(query_destino, (dia, est_id))
+            cur_destino.execute(query_destino, (dia_normalizado, dia_normalizado, est_id))
             registro_destino = cur_destino.fetchone()
             
             total_validados += 1
@@ -152,7 +204,7 @@ def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=10
             if not registro_destino:
                 divergencias.append({
                     'tipo': 'REGISTRO_AUSENTE',
-                    'dia': dia,
+                    'dia': dia_orig,
                     'estacao_id': est_id,
                     'origem': registro_origem,
                     'destino': None
@@ -160,14 +212,17 @@ def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=10
             else:
                 dia_dest, m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest, estacao_dest, est_id_dest = registro_destino
                 
-                # Comparar valores
-                valores_origem = (m05_origem, m10_origem, m15_origem, h01_origem, h04_origem, h24_origem, h96_origem)
-                valores_destino = (m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest)
+                # Normalizar valores para comparação (mesma lógica do script de carregamento)
+                valores_origem = tuple(normalizar_valor(v) for v in (m05_origem, m10_origem, m15_origem, h01_origem, h04_origem, h24_origem, h96_origem))
+                valores_destino = tuple(normalizar_valor(v) for v in (m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest))
                 
-                if valores_origem != valores_destino:
+                # Comparar valores usando tolerância para floats (mesma lógica dos testes)
+                valores_diferentes = any(not valores_iguais(orig, dest) for orig, dest in zip(valores_origem, valores_destino))
+                
+                if valores_diferentes:
                     divergencias.append({
                         'tipo': 'VALORES_DIFERENTES',
-                        'dia': dia,
+                        'dia': dia_orig,
                         'estacao_id': est_id,
                         'origem': registro_origem,
                         'destino': registro_destino
