@@ -89,7 +89,7 @@ from dotenv import load_dotenv
 import sys
 from pathlib import Path
 # Obter diretório raiz do projeto (2 níveis acima deste arquivo)
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 def extrair_timezone_offset(dt):

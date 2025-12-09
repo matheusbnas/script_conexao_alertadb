@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 # Carregar variáveis de ambiente do arquivo .env
 from pathlib import Path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 env_path = project_root / '.env'
 
 # Verificar se o arquivo .env existe

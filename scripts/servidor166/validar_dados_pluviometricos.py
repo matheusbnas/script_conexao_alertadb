@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 # Carregar variáveis de ambiente
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 def obter_variavel(nome, obrigatoria=True):
