@@ -22,7 +22,7 @@ O dashboard está integrado ao Flask e é servido automaticamente quando você i
 cd /scripts/
 
 # Inicie a API
-python scripts/app.py
+python scripts/servidor166/app.py
 ```
 
 Você verá uma saída como esta:
@@ -137,13 +137,13 @@ gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 --access-logfile - --error-logfile -
 
 ### Usando nohup:
 ```bash
-nohup python scripts/app.py > logs/api.log 2>&1 &
+nohup python scripts/servidor166/app.py > logs/api.log 2>&1 &
 ```
 
 ### Usando screen:
 ```bash
 screen -S api
-python scripts/app.py
+python scripts/servidor166/app.py
 # Pressione Ctrl+A depois D para desanexar
 # Para reanexar: screen -r api
 ```
@@ -161,7 +161,7 @@ Type=simple
 User=seu_usuario
 WorkingDirectory=/caminho/do/projeto
 Environment="PATH=/usr/bin:/usr/local/bin"
-ExecStart=/usr/bin/python3 /caminho/do/projeto/scripts/app.py
+ExecStart=/usr/bin/python3 /caminho/do/projeto/scripts/servidor166/app.py
 Restart=always
 
 [Install]
@@ -215,7 +215,7 @@ Certifique-se de que o arquivo `.env` está na raiz do projeto (mesmo nível que
 
 ### Dashboard não carrega dados
 1. Verifique se a API está rodando
-2. Verifique se o banco tem dados: `python scripts/carregar_pluviometricos_historicos.py`
+2. Verifique se o banco tem dados: `python scripts/servidor166/carregar_pluviometricos_historicos.py`
 3. Verifique os logs no console da API
 4. Abra o console do navegador (F12) para ver erros JavaScript
 

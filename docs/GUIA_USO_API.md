@@ -10,7 +10,7 @@ Primeiro, certifique-se de que a API está rodando:
 
 ```bash
 # Desenvolvimento
-python scripts/app.py
+python scripts/servidor166/app.py
 
 # Produção (com gunicorn)
 gunicorn -w 4 -b 0.0.0.0:5000 scripts.app:app
@@ -527,11 +527,11 @@ Este é o erro mais comum! Significa que a senha do banco não está configurada
 4. **Reinicie a API após alterar o `.env`:**
    ```bash
    # Pare a API (Ctrl+C) e inicie novamente
-   python scripts/app.py
+   python scripts/servidor166/app.py
    ```
 
 ### **Erro de conexão**
-- Verifique se a API está rodando: `python scripts/app.py`
+- Verifique se a API está rodando: `python scripts/servidor166/app.py`
 - Verifique se a porta está correta (padrão: 5000)
 - Verifique se o firewall permite conexões
 - Execute o script de verificação: `python scripts/verificar_config_api.py`
@@ -552,7 +552,7 @@ Este é o erro mais comum! Significa que a senha do banco não está configurada
   ```
 
 ### **Nenhum dado retornado**
-- Verifique se os dados foram sincronizados: `python scripts/carregar_pluviometricos_historicos.py`
+- Verifique se os dados foram sincronizados: `python scripts/servidor166/carregar_pluviometricos_historicos.py`
 - Verifique se o cron está rodando: `crontab -l`
 - Verifique os logs de sincronização em `logs/`
 - Verifique se a tabela `pluviometricos` tem dados:
@@ -565,7 +565,7 @@ Este é o erro mais comum! Significa que a senha do banco não está configurada
 ## 📚 Mais Informações
 
 - **Documentação da API:** `http://localhost:5000/api/docs`
-- **Código fonte:** `scripts/app.py`
+- **Código fonte:** `scripts/servidor166/app.py`
 - **Configuração:** `CONFIGURACAO_EXEMPLO.md`
 
 ---

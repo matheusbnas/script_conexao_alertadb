@@ -1,32 +1,51 @@
 #!/bin/bash
 # ============================================================================
-# Script para Configurar Cron - Sincronização Cloud SQL
+# Script para Configurar Cron - Sincronização Automática
 # ============================================================================
 #
-# Este script configura o cron para executar a sincronização com Cloud SQL
-# automaticamente a cada 5 minutos.
-#
-# IMPORTANTE: Adaptado do configurar_cron_linux.sh existente no projeto
+# Este script configura o cron para executar a sincronização automaticamente
+# a cada 5 minutos. Suporta sincronização normal e Cloud SQL.
 #
 # ============================================================================
 # USO:
 # ============================================================================
 #
-# 1. Torne executável: chmod +x configurar_cron_cloudsql.sh
-# 2. Execute: ./configurar_cron_cloudsql.sh
-# 3. O cron será configurado automaticamente
+# Configurar sincronização normal:
+#   ./configurar_cron.sh normal
+#   ou apenas: ./configurar_cron.sh
+#
+# Configurar sincronização Cloud SQL:
+#   ./configurar_cron.sh cloudsql
 #
 # ============================================================================
 
+# Tipo de sincronização (normal ou cloudsql)
+TIPO="${1:-normal}"
+
+# Validar tipo
+if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ]; then
+    echo "❌ ERRO: Tipo inválido. Use 'normal' ou 'cloudsql'"
+    echo "Uso: $0 [normal|cloudsql]"
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CRON_SCRIPT="$SCRIPT_DIR/cron_cloudsql.sh"
-CRON_JOB="*/5 * * * * $CRON_SCRIPT"
+CRON_SCRIPT="$SCRIPT_DIR/cron.sh"
+CRON_JOB="*/5 * * * * $CRON_SCRIPT $TIPO"
+
+# Mensagens baseadas no tipo
+if [ "$TIPO" = "cloudsql" ]; then
+    TIPO_DESCRICAO="Cloud SQL"
+else
+    TIPO_DESCRICAO="Normal (Servidor 166)"
+fi
 
 echo "============================================================================"
-echo "Configuração de Cron - Sincronização Cloud SQL"
+echo "Configuração de Cron - Sincronização $TIPO_DESCRICAO"
 echo "============================================================================"
 echo ""
 echo "Script de cron: $CRON_SCRIPT"
+echo "Tipo: $TIPO_DESCRICAO"
 echo "Intervalo: A cada 5 minutos"
 echo ""
 echo "Entrada a adicionar no crontab:"
@@ -41,13 +60,13 @@ fi
 
 # Tornar executável
 chmod +x "$CRON_SCRIPT"
-echo "✅ Script tornando executável..."
+echo "✅ Script de cron tornando executável..."
 
 # Verificar se já existe no crontab
-if crontab -l 2>/dev/null | grep -q "$CRON_SCRIPT"; then
-    echo "⚠️  ATENÇÃO: Já existe entrada no crontab para este script."
+if crontab -l 2>/dev/null | grep -q "$CRON_SCRIPT.*$TIPO"; then
+    echo "⚠️  ATENÇÃO: Já existe entrada no crontab para este tipo de sincronização."
     echo "   Entrada existente:"
-    crontab -l 2>/dev/null | grep "$CRON_SCRIPT"
+    crontab -l 2>/dev/null | grep "$CRON_SCRIPT.*$TIPO"
     echo ""
     read -p "Deseja substituir? (s/N): " -n 1 -r
     echo ""
@@ -56,7 +75,7 @@ if crontab -l 2>/dev/null | grep -q "$CRON_SCRIPT"; then
         exit 0
     fi
     # Remover entrada existente
-    crontab -l 2>/dev/null | grep -v "$CRON_SCRIPT" | crontab -
+    crontab -l 2>/dev/null | grep -v "$CRON_SCRIPT.*$TIPO" | crontab -
 fi
 
 # Adicionar ao crontab
@@ -73,3 +92,4 @@ echo "  crontab -e"
 echo "  (remova a linha correspondente)"
 echo ""
 echo "============================================================================"
+

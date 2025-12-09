@@ -10,32 +10,17 @@ projeto/
 ├── 📄 .env                                # Configurações (criar manualmente)
 │
 ├── 📂 scripts/                            # Scripts principais de sincronização
-│   ├── carregar_pluviometricos_historicos.py
-│   │   └── Carrega TODOS os dados históricos (primeira vez)
+│   ├── servidor166/                       # Scripts para máquina virtual (servidor 166)
+│   │   ├── carregar_pluviometricos_historicos.py
+│   │   ├── sincronizar_pluviometricos_novos.py
+│   │   ├── validar_dados_pluviometricos.py
+│   │   ├── exportar_pluviometricos_parquet.py
+│   │   ├── app.py
+│   │   └── dashboard.html
 │   │
-│   ├── sincronizar_pluviometricos_novos.py
-│   │   └── Sincroniza APENAS novos dados (após carga inicial)
-│   │
-│   ├── carregar_para_cloudsql_inicial.py
-│   │   └── Carga inicial para Cloud SQL GCP
-│   │
-│   ├── sincronizar_para_cloudsql.py
-│   │   └── Sincronização incremental para Cloud SQL GCP
-│   │
-│   ├── exportar_pluviometricos_parquet.py
-│   │   └── Exporta dados para arquivos Parquet
-│   │
-│   ├── validar_dados_pluviometricos.py
-│   │   └── Valida integridade dos dados entre origem e destino
-│   │
-│   ├── consultar_alertadb_cor.py
-│   │   └── Consulta dados do banco destino
-│   │
-│   ├── app.py
-│   │   └── API REST para consulta dos dados
-│   │
-│   └── dashboard.html
-│       └── Dashboard web para visualização
+│   └── cloudsql/                          # Scripts para Cloud SQL GCP
+│       ├── carregar_para_cloudsql_inicial.py
+│       └── sincronizar_para_cloudsql.py
 │
 ├── 📂 setup/                              # Scripts de configuração/setup
 │   ├── criar_usuario_postgresql.sql       # Cria usuário no PostgreSQL
@@ -44,12 +29,8 @@ projeto/
 │   └── testar_conexao.py                  # Testa conexão com servidor
 │
 ├── 📂 automacao/                          # Scripts de automação
-│   ├── cron_linux.sh                      # Script cron para Linux
-│   ├── cron_cloudsql.sh                    # Script cron para Cloud SQL
-│   ├── configurar_cron_linux.sh            # Helper para configurar cron
-│   ├── configurar_cron_cloudsql.sh         # Helper para configurar cron Cloud SQL
-│   ├── prefect_flow.py                     # Flow Prefect
-│   └── prefect_deployment.py               # Deployment Prefect
+│   ├── cron.sh                            # Script unificado de cron (normal|cloudsql)
+│   └── configurar_cron.sh                 # Script unificado de configuração (normal|cloudsql)
 │
 ├── 📂 docs/                               # Documentação
 │   ├── OPCOES_AUTOMACAO.md                 # Opções de automação
@@ -82,22 +63,17 @@ projeto/
 ### `scripts/`
 Scripts principais que fazem a sincronização e manipulação de dados:
 
-**Sincronização:**
+**servidor166/** - Scripts para máquina virtual (servidor 166):
 - **carregar_pluviometricos_historicos.py** - Carga inicial completa
 - **sincronizar_pluviometricos_novos.py** - Sincronização incremental
-
-**Cloud SQL:**
-- **carregar_para_cloudsql_inicial.py** - Carga inicial para Cloud SQL GCP
-- **sincronizar_para_cloudsql.py** - Sincronização incremental para Cloud SQL GCP
-
-**Utilitários:**
-- **exportar_pluviometricos_parquet.py** - Exporta dados para formato Parquet
 - **validar_dados_pluviometricos.py** - Valida integridade dos dados
-- **consultar_alertadb_cor.py** - Consulta dados do banco destino
-
-**API e Interface:**
+- **exportar_pluviometricos_parquet.py** - Exporta dados para formato Parquet
 - **app.py** - API REST Flask para consulta dos dados
 - **dashboard.html** - Dashboard web para visualização
+
+**cloudsql/** - Scripts para Cloud SQL GCP:
+- **carregar_para_cloudsql_inicial.py** - Carga inicial para Cloud SQL GCP
+- **sincronizar_para_cloudsql.py** - Sincronização incremental para Cloud SQL GCP
 
 ### `setup/`
 Scripts de configuração inicial do sistema:
@@ -108,8 +84,8 @@ Scripts de configuração inicial do sistema:
 
 ### `automacao/`
 Scripts para automatizar a execução:
-- **cron_linux.sh** - Para usar com cron no Linux
-- **cron_cloudsql.sh** - Para usar com cron para Cloud SQL
+- **cron.sh** - Script unificado que aceita parâmetro `normal` ou `cloudsql`
+- **configurar_cron.sh** - Script unificado de configuração que aceita parâmetro `normal` ou `cloudsql`
 - **prefect_flow.py** - Para usar com Prefect
 - **configurar_cron_linux.sh** - Helper para configurar cron Linux
 - **configurar_cron_cloudsql.sh** - Helper para configurar cron Cloud SQL
@@ -147,11 +123,10 @@ Scripts de teste e diagnóstico:
    └── psql -U postgres -f setup/criar_banco_servidor.sql
 
 2. Carga Inicial
-   └── python scripts/carregar_pluviometricos_historicos.py
+   └── python scripts/servidor166/carregar_pluviometricos_historicos.py
 
-3. Automação (escolha uma)
-   ├── Linux: automacao/cron_linux.sh
-   └── Prefect: automacao/prefect_flow.py
+3. Automação
+   └── Linux: automacao/configurar_cron.sh normal
 ```
 
 ---

@@ -27,8 +27,8 @@ scripts/
 ### **Automação** (`automacao/`)
 ```
 automacao/
-├── cron_cloudsql.sh                   # Script cron Cloud SQL
-├── configurar_cron_cloudsql.sh        # Instalador automático
+├── cron.sh                            # Script unificado de cron (normal|cloudsql)
+└── configurar_cron.sh                 # Script unificado de configuração (normal|cloudsql)
 ```
 
 ---
@@ -92,17 +92,18 @@ curl https://api.ipify.org
 cd /opt/sync-nimbus  # ou diretório do projeto
 
 # Copiar scripts principais
-cp /caminho/carregar_para_cloudsql_inicial.py scripts/
-cp /caminho/sincronizar_para_cloudsql.py scripts/
+mkdir -p scripts/cloudsql
+cp /caminho/carregar_para_cloudsql_inicial.py scripts/cloudsql/
+cp /caminho/sincronizar_para_cloudsql.py scripts/cloudsql/
 
 # Copiar automação
-cp /caminho/cron_cloudsql.sh automacao/
-cp /caminho/configurar_cron_cloudsql.sh automacao/
+cp /caminho/cron.sh automacao/
+cp /caminho/configurar_cron.sh automacao/
 
 # Tornar executáveis
-chmod +x scripts/*.py
-chmod +x automacao/cron_cloudsql.sh
-chmod +x automacao/configurar_cron_cloudsql.sh
+chmod +x scripts/cloudsql/*.py
+chmod +x automacao/cron.sh
+chmod +x automacao/configurar_cron.sh
 ```
 
 ---
@@ -134,7 +135,7 @@ psql -h 34.82.95.242 -U postgres -d alertadb_cor -c "SELECT 1;"
 
 ```bash
 cd /opt/sync-nimbus
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 ```
 
 **Saída esperada:**
@@ -157,17 +158,17 @@ python3 scripts/carregar_para_cloudsql_inicial.py
 
 ```bash
 cd automacao
-./configurar_cron_cloudsql.sh
+./configurar_cron.sh cloudsql
 ```
 
 OU manualmente:
 
 ```bash
-chmod +x automacao/cron_cloudsql.sh
+chmod +x automacao/cron.sh
 
 crontab -e
 # Adicionar:
-*/5 * * * * /opt/sync-nimbus/automacao/cron_cloudsql.sh
+*/5 * * * * /opt/sync-nimbus/automacao/cron.sh cloudsql
 ```
 
 ---
@@ -179,7 +180,7 @@ crontab -e
 tail -f logs/cloudsql_*.log
 
 # Testar manualmente
-python3 scripts/sincronizar_para_cloudsql.py --once
+python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once
 
 # Verificar cron
 crontab -l
@@ -193,16 +194,16 @@ crontab -l
 /opt/sync-nimbus/
 ├── .env                                    # ⚙️ ATUALIZADO (novas variáveis)
 ├── scripts/
-│   ├── carregar_pluviometricos_historicos.py  # Existente (NIMBUS→166)
-│   ├── sincronizar_pluviometricos_novos.py    # Existente (NIMBUS→166)
-│   ├── carregar_para_cloudsql_inicial.py      # 🆕 NOVO (166→Cloud SQL)
-│   ├── sincronizar_para_cloudsql.py           # 🆕 NOVO (166→Cloud SQL)
-│   └── app.py                                 # Existente (API REST)
+│   ├── servidor166/                            # Scripts para servidor 166
+│   │   ├── carregar_pluviometricos_historicos.py
+│   │   ├── sincronizar_pluviometricos_novos.py
+│   │   └── app.py                              # API REST
+│   └── cloudsql/                               # Scripts Cloud SQL
+│       ├── carregar_para_cloudsql_inicial.py  # 🆕 NOVO (166→Cloud SQL)
+│       └── sincronizar_para_cloudsql.py       # 🆕 NOVO (166→Cloud SQL)
 ├── automacao/
-│   ├── cron_linux.sh                          # Existente (NIMBUS→166)
-│   ├── configurar_cron_linux.sh               # Existente (NIMBUS→166)
-│   ├── cron_cloudsql.sh                       # 🆕 NOVO (166→Cloud SQL)
-│   └── configurar_cron_cloudsql.sh            # 🆕 NOVO (166→Cloud SQL)
+│   ├── cron.sh                                 # Script unificado (normal|cloudsql)
+│   └── configurar_cron.sh                     # Configuração unificada (normal|cloudsql)
 └── logs/
     ├── sincronizacao_*.log                    # Logs NIMBUS→166
     └── cloudsql_*.log                         # 🆕 Logs 166→Cloud SQL
@@ -216,7 +217,7 @@ crontab -l
 
 ```bash
 # Carga inicial (já executado)
-python3 scripts/carregar_pluviometricos_historicos.py
+python3 scripts/servidor166/carregar_pluviometricos_historicos.py
 
 # Sync contínuo (cron ativo)
 */5 * * * * /opt/sync-nimbus/automacao/cron_linux.sh
@@ -226,10 +227,10 @@ python3 scripts/carregar_pluviometricos_historicos.py
 
 ```bash
 # Carga inicial (executar uma vez)
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 
 # Sync contínuo (novo cron)
-*/5 * * * * /opt/sync-nimbus/automacao/cron_cloudsql.sh
+*/5 * * * * /opt/sync-nimbus/automacao/cron.sh cloudsql
 ```
 
 ---
@@ -300,7 +301,7 @@ grep CLOUDSQL_PASSWORD .env
 **Solução:**
 ```bash
 # Executar carga inicial primeiro
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 ```
 
 ---
@@ -313,11 +314,11 @@ python3 scripts/carregar_para_cloudsql_inicial.py
 which python3
 
 # Permissões
-ls -la automacao/cron_cloudsql.sh
+ls -la automacao/cron.sh
 
 # Testar manualmente
 cd /opt/sync-nimbus
-automacao/cron_cloudsql.sh
+automacao/cron.sh cloudsql
 ```
 
 ---
@@ -341,13 +342,13 @@ automacao/cron_cloudsql.sh
 
 ```bash
 # Executar carga inicial
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 
 # Testar sync incremental
-python3 scripts/sincronizar_para_cloudsql.py --once
+python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once
 
 # Configurar cron
-./automacao/configurar_cron_cloudsql.sh
+./automacao/configurar_cron.sh cloudsql
 
 # Ver logs
 tail -f logs/cloudsql_*.log

@@ -16,10 +16,10 @@ nano .env
 psql -h 34.82.95.242 -U postgres -d alertadb_cor -c "SELECT 1;"
 
 # 5. Carga inicial
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 
 # 6. Configurar cron
-./automacao/configurar_cron_cloudsql.sh
+./automacao/configurar_cron.sh cloudsql
 ```
 
 ---
@@ -30,20 +30,20 @@ python3 scripts/carregar_para_cloudsql_inicial.py
 
 ```bash
 # Carga inicial (uma vez)
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 
 # Sync incremental manual
-python3 scripts/sincronizar_para_cloudsql.py --once
+python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once
 
 # Sync contínuo
-python3 scripts/sincronizar_para_cloudsql.py
+python3 scripts/cloudsql/sincronizar_para_cloudsql.py
 ```
 
 ### **Automação**
 
 ```bash
 # Configurar cron
-./automacao/configurar_cron_cloudsql.sh
+./automacao/configurar_cron.sh cloudsql
 
 # Verificar cron
 crontab -l | grep cloudsql
@@ -53,7 +53,7 @@ crontab -e
 # Remover linha correspondente
 
 # Testar script cron
-./automacao/cron_cloudsql.sh
+./automacao/cron.sh cloudsql
 ```
 
 ### **Logs**
@@ -129,7 +129,7 @@ telnet 34.82.95.242 5432
 
 ```bash
 # Executar carga inicial
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 ```
 
 ### **Erro: Senha incorreta**
@@ -158,14 +158,14 @@ crontab -e
 
 ```bash
 # Status geral
-python3 scripts/sincronizar_para_cloudsql.py --once; \
+python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once; \
 psql -h 34.82.95.242 -U postgres -d alertadb_cor -c "SELECT COUNT(*), MAX(dia) FROM pluviometricos;"
 
 # Ver última sincronização
 tail -1 logs/cloudsql_*.log
 
 # Forçar sync agora
-./automacao/cron_cloudsql.sh
+./automacao/cron.sh cloudsql
 
 # Comparar dados
 echo "Servidor 166:" && psql -h localhost -U postgres -d alertadb_cor -t -c "SELECT COUNT(*) FROM pluviometricos;" && \

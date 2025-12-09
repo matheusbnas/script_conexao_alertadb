@@ -30,7 +30,7 @@ Servidor 166 (alertadb_cor)
   ├─ API REST (app.py)
   └─ [carregar_para_cloudsql_inicial.py]     🆕 NOVO
      [sincronizar_para_cloudsql.py]          🆕 NOVO
-     [cron_cloudsql.sh - a cada 5 min]       🆕 NOVO
+     [cron.sh cloudsql - a cada 5 min]       🆕 NOVO
         ↓
     Cloud SQL GCP (34.82.95.242)
 ```
@@ -50,8 +50,8 @@ Servidor 166 (alertadb_cor)
 
 | Arquivo | Baseado Em | Função |
 |---------|-----------|--------|
-| `cron_cloudsql.sh` | `cron_linux.sh` | Script cron |
-| `configurar_cron_cloudsql.sh` | `configurar_cron_linux.sh` | Instalador automático |
+| `cron.sh cloudsql` | `cron_linux.sh` | Script cron |
+| `configurar_cron.sh cloudsql` | `configurar_cron_linux.sh` | Instalador automático |
 
 ### **Documentação**
 
@@ -91,13 +91,13 @@ curl https://api.ipify.org
 ### **3. Carga Inicial**
 
 ```bash
-python3 scripts/carregar_para_cloudsql_inicial.py
+python3 scripts/cloudsql/carregar_para_cloudsql_inicial.py
 ```
 
 ### **4. Automação**
 
 ```bash
-./automacao/configurar_cron_cloudsql.sh
+./automacao/configurar_cron.sh cloudsql
 ```
 
 **Pronto!** 🎉
@@ -134,7 +134,7 @@ python3 scripts/carregar_para_cloudsql_inicial.py
 ### **Camada 2: 166 → Cloud SQL** (Novo)
 ```bash
 # Cron a cada 5 min
-*/5 * * * * /opt/sync-nimbus/automacao/cron_cloudsql.sh
+*/5 * * * * /opt/sync-nimbus/automacao/cron.sh cloudsql
 
 # Busca novos dados do alertadb_cor (servidor 166)
 # Sincroniza para Cloud SQL GCP

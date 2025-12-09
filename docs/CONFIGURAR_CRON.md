@@ -26,13 +26,17 @@ cd automacao
 
 2. **Torne o script executável:**
 ```bash
-chmod +x configurar_cron_linux.sh
-chmod +x cron_linux.sh
+chmod +x configurar_cron.sh cron.sh
 ```
 
 3. **Execute o script de configuração:**
 ```bash
-./configurar_cron_linux.sh
+# Para sincronização normal (servidor 166)
+./configurar_cron.sh normal
+# ou apenas: ./configurar_cron.sh
+
+# Para sincronização Cloud SQL
+./configurar_cron.sh cloudsql
 ```
 
 O script irá:
@@ -50,12 +54,20 @@ crontab -e
 
 2. **Adicione a seguinte linha:**
 ```bash
-*/5 * * * * /caminho/completo/para/automacao/cron_linux.sh
+# Para sincronização normal (servidor 166)
+*/5 * * * * /caminho/completo/para/automacao/cron.sh normal
+
+# Para sincronização Cloud SQL
+*/5 * * * * /caminho/completo/para/automacao/cron.sh cloudsql
 ```
 
 **Exemplo:**
 ```bash
-*/5 * * * * /home/usuario/repos/testarconexao/automacao/cron_linux.sh
+# Normal
+*/5 * * * * /home/usuario/repos/testarconexao/automacao/cron.sh normal
+
+# Cloud SQL
+*/5 * * * * /home/usuario/repos/testarconexao/automacao/cron.sh cloudsql
 ```
 
 3. **Salve e feche o editor** (no vim: `:wq`, no nano: `Ctrl+X` e depois `Y`)
@@ -87,7 +99,7 @@ Antes de confiar no cron, teste manualmente:
 
 ```bash
 cd /caminho/do/projeto
-python3 scripts/sincronizar_pluviometricos_novos.py --once
+python3 scripts/servidor166/sincronizar_pluviometricos_novos.py --once
 ```
 
 ---
@@ -102,10 +114,10 @@ crontab -e
 ```
 
 Altere o intervalo (exemplos):
-- A cada 1 minuto: `* * * * *`
-- A cada 5 minutos: `*/5 * * * *` (padrão)
-- A cada 10 minutos: `*/10 * * * *`
-- A cada hora: `0 * * * *`
+- A cada 1 minuto: `* * * * * /caminho/automacao/cron.sh normal`
+- A cada 5 minutos: `*/5 * * * * /caminho/automacao/cron.sh normal` (padrão)
+- A cada 10 minutos: `*/10 * * * * /caminho/automacao/cron.sh normal`
+- A cada hora: `0 * * * * /caminho/automacao/cron.sh normal`
 
 ### Usar Variável de Ambiente para Intervalo
 
@@ -139,12 +151,16 @@ grep CRON /var/log/syslog | tail -20
 
 3. **Verifique permissões:**
 ```bash
-chmod +x automacao/cron_linux.sh
+chmod +x automacao/cron.sh
 ```
 
 4. **Teste o script manualmente:**
 ```bash
-./automacao/cron_linux.sh
+# Teste sincronização normal
+./automacao/cron.sh normal
+
+# Teste sincronização Cloud SQL
+./automacao/cron.sh cloudsql
 ```
 
 ### Script falha silenciosamente
@@ -163,7 +179,7 @@ cat logs/sincronizacao_*.log | tail -50
 
 3. **Teste conexões manualmente:**
 ```bash
-python3 scripts/sincronizar_pluviometricos_novos.py --once
+python3 scripts/servidor166/sincronizar_pluviometricos_novos.py --once
 ```
 
 ### Erro de caminho não encontrado
@@ -172,10 +188,10 @@ Certifique-se de usar **caminhos absolutos** no crontab:
 
 ```bash
 # ❌ ERRADO (caminho relativo)
-*/5 * * * * ./automacao/cron_linux.sh
+*/5 * * * * ./automacao/cron.sh normal
 
 # ✅ CORRETO (caminho absoluto)
-*/5 * * * * /home/usuario/repos/testarconexao/automacao/cron_linux.sh
+*/5 * * * * /home/usuario/repos/testarconexao/automacao/cron.sh normal
 ```
 
 ---

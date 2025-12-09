@@ -42,56 +42,7 @@ Este documento apresenta diferentes opções para automatizar a execução do `a
 
 ---
 
-## 2️⃣ PREFECT - ⭐ RECOMENDADO PARA PRODUÇÃO AVANÇADA
-
-### ✅ Vantagens:
-- **Interface web moderna**: Dashboard visual bonito
-- **Retry automático**: Tenta novamente se falhar
-- **Logs detalhados**: Histórico completo de execuções
-- **Monitoramento**: Avisos e alertas
-- **Escalável**: Pode rodar em múltiplos servidores
-- **Python nativo**: Tudo em Python, fácil de integrar
-- **Open-source**: Grátis para uso local
-
-### ❌ Desvantagens:
-- **Mais complexo**: Precisa aprender conceitos novos
-- **Dependência extra**: Precisa instalar Prefect
-- **Recursos**: Consome mais memória/CPU
-- **Curva de aprendizado**: Pode levar tempo para configurar
-
-### 📝 Como Funciona:
-```python
-# Define um "flow" (fluxo de trabalho)
-@flow
-def sync_pluviometricos_flow():
-    # Executa tasks com retry automático
-    task_sincronizar_dados()
-```
-
-### 💡 Quando Usar:
-- Precisa de monitoramento visual
-- Quer retry automático em caso de falha
-- Múltiplos processos para gerenciar
-- Ambiente de produção profissional
-
-### 🎯 Exemplo de Interface Prefect:
-```
-┌─────────────────────────────────────┐
-│  Prefect Dashboard                  │
-├─────────────────────────────────────┤
-│  ✅ sync_pluviometricos             │
-│     Última execução: 2 min atrás    │
-│     Status: Sucesso                  │
-│     Registros: 150                  │
-│                                     │
-│  📊 Histórico de Execuções          │
-│  [Gráfico de execuções]             │
-└─────────────────────────────────────┘
-```
-
----
-
-## 3️⃣ APSCHEDULER (Python) - ⭐ ALTERNATIVA PYTHON SIMPLES
+## 2️⃣ APSCHEDULER (Python) - ⭐ ALTERNATIVA PYTHON SIMPLES
 
 ### ✅ Vantagens:
 - **Python puro**: Tudo em Python, fácil de integrar
@@ -120,7 +71,7 @@ scheduler.start()
 
 ---
 
-## 4️⃣ SCRIPT LOOP + SYSTEMD (Linux) - ⭐ SERVIÇO DO SISTEMA
+## 3️⃣ SCRIPT LOOP + SYSTEMD (Linux) - ⭐ SERVIÇO DO SISTEMA
 
 ### ✅ Vantagens:
 - **Serviço do sistema**: Inicia automaticamente com o sistema
@@ -159,8 +110,8 @@ WantedBy=multi-user.target
 1. **Cron (Linux)**: Use Cron com `cron_linux.sh` - Simples e confiável
 
 ### Para Produção (Avançado):
-1. **Prefect**: Se precisa de monitoramento visual e retry automático
-2. **Systemd**: Se quer serviço do sistema Linux
+1. **Systemd**: Se quer serviço do sistema Linux com restart automático
+2. **APScheduler**: Se prefere tudo em Python sem dependências externas
 
 ---
 
@@ -168,8 +119,7 @@ WantedBy=multi-user.target
 
 Escolha uma opção e configure:
 
-1. **Cron (Linux)** - Scripts prontos, só ajustar caminhos
-2. **Prefect** - Criar flow completo com interface web
-3. **APScheduler** - Script Python simples com agendamento
-4. **Systemd** - Criar serviço do sistema Linux
+1. **Cron (Linux)** - Scripts prontos, só ajustar caminhos (RECOMENDADO)
+2. **APScheduler** - Script Python simples com agendamento
+3. **Systemd** - Criar serviço do sistema Linux
 
