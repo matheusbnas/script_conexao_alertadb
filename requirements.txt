@@ -51,6 +51,14 @@ pyarrow
 sqlalchemy
 
 # ============================================================================
+# BIGQUERY - Exportacao para BigQuery (OPCIONAL)
+# ============================================================================
+google-cloud-bigquery
+google-cloud-bigquery-storage  # Para leitura otimizada do BigQuery
+google-auth
+db-dtypes  # Tipos de dados específicos do BigQuery (DATE, TIME, etc.)
+
+# ============================================================================
 # MONITORAMENTO E LOGS (OPCIONAL)
 # ============================================================================
 # Logs estruturados
