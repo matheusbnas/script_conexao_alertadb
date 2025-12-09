@@ -211,29 +211,82 @@ def carregar_dados_completos():
         
         # Conectar ao servidor 166
         conn_origem = psycopg2.connect(**ORIGEM)
+        # Configurar encoding UTF-8
+        conn_origem.set_client_encoding('UTF8')
         cur_origem = conn_origem.cursor()
         
-        # Buscar TODOS os dados
+        # Buscar TODOS os dados (sem ORDER BY para melhor performance - ordenar depois se necessário)
         query = """
         SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
-        FROM pluviometricos
-        ORDER BY dia ASC;
+        FROM pluviometricos;
         """
         
         print("📦 Buscando dados do servidor 166...")
-        cur_origem.execute(query)
+        print("   💡 Isso pode levar alguns minutos dependendo do volume de dados...")
+        inicio_query = datetime.now()
+        try:
+            cur_origem.execute(query)
+            tempo_query = (datetime.now() - inicio_query).total_seconds()
+            print(f"   ✅ Query executada em {tempo_query:.1f} segundos")
+        except Exception as e:
+            print(f"❌ Erro ao executar query: {e}")
+            print(f"   Tipo do erro: {type(e).__name__}")
+            raise
         
-        # Processar em lotes
-        TAMANHO_LOTE = 10000
+        # Processar em lotes (aumentado para melhor performance)
+        TAMANHO_LOTE = 50000  # Aumentado de 10.000 para 50.000
         total_inseridos = 0
         lote_numero = 1
         
         # Conectar ao Cloud SQL
         conn_destino = psycopg2.connect(**DESTINO)
+        # Configurar encoding UTF-8
+        conn_destino.set_client_encoding('UTF8')
         cur_destino = conn_destino.cursor()
         
         # Configurar timezone
         cur_destino.execute("SET timezone = 'America/Sao_Paulo';")
+        
+        # Otimizações para carga em massa (PostgreSQL)
+        print("⚙️  Configurando otimizações para carga em massa...")
+        try:
+            # Desabilitar autovacuum temporariamente durante carga (melhora performance)
+            cur_destino.execute("ALTER TABLE pluviometricos SET (autovacuum_enabled = false);")
+        except Exception as e:
+            print(f"   ⚠️  Não foi possível desabilitar autovacuum: {e}")
+        
+        try:
+            # Aumentar work_mem para operações de ordenação/agregação
+            cur_destino.execute("SET work_mem = '512MB';")
+        except Exception as e:
+            print(f"   ⚠️  Não foi possível configurar work_mem: {e}")
+        
+        try:
+            # Desabilitar synchronous_commit para melhorar performance (mais rápido, menos seguro)
+            cur_destino.execute("SET synchronous_commit = off;")
+        except Exception as e:
+            print(f"   ⚠️  Não foi possível desabilitar synchronous_commit: {e}")
+        
+        try:
+            # Aumentar maintenance_work_mem para operações de manutenção
+            cur_destino.execute("SET maintenance_work_mem = '2GB';")
+        except Exception as e:
+            print(f"   ⚠️  Não foi possível configurar maintenance_work_mem: {e}")
+        
+        try:
+            # Aumentar max_wal_size para reduzir checkpoints durante carga
+            cur_destino.execute("SET max_wal_size = '2GB';")
+        except Exception as e:
+            print(f"   ⚠️  Não foi possível configurar max_wal_size: {e}")
+        
+        try:
+            # Desabilitar fsync temporariamente (apenas durante carga - mais rápido)
+            cur_destino.execute("SET fsync = off;")
+        except Exception as e:
+            # Cloud SQL pode não permitir, ignorar
+            pass
+        
+        print("   ✅ Otimizações configuradas.\n")
         
         # SQL de inserção
         insert_sql = '''
@@ -252,7 +305,8 @@ def carregar_dados_completos():
             estacao = EXCLUDED.estacao;
         '''
         
-        print("📦 Processando dados em lotes de 10.000 registros...\n")
+        print("📦 Processando dados em lotes de 50.000 registros...\n")
+        inicio_carga = datetime.now()
         
         primeira_data = None
         ultima_data = None
@@ -272,11 +326,17 @@ def carregar_dados_completos():
             ultima_data = data_fim_lote
             
             # Inserir no Cloud SQL
-            execute_values(cur_destino, insert_sql, dados)
+            inicio_lote = datetime.now()
+            execute_values(cur_destino, insert_sql, dados, page_size=50000)
             conn_destino.commit()
+            tempo_lote = (datetime.now() - inicio_lote).total_seconds()
             
             total_inseridos += len(dados)
-            print(f'   📦 Lote {lote_numero}: {len(dados):,} registros (Total: {total_inseridos:,})')
+            tempo_decorrido = (datetime.now() - inicio_carga).total_seconds()
+            velocidade = total_inseridos / tempo_decorrido if tempo_decorrido > 0 else 0
+            velocidade_lote = len(dados) / tempo_lote if tempo_lote > 0 else 0
+            
+            print(f'   📦 Lote {lote_numero}: {len(dados):,} registros (Total: {total_inseridos:,}) | {tempo_lote:.1f}s | {velocidade_lote:.0f} reg/s | Média: {velocidade:.0f} reg/s')
             if data_inicio_lote and data_fim_lote:
                 print(f'      📅 {data_inicio_lote} até {data_fim_lote}')
             lote_numero += 1
@@ -284,6 +344,26 @@ def carregar_dados_completos():
         if total_inseridos == 0:
             print('\n   ⚠️  Nenhum dado encontrado para inserir.')
             return 0
+        
+        # Restaurar configurações padrão
+        tempo_total = (datetime.now() - inicio_carga).total_seconds()
+        print("\n⚙️  Restaurando configurações padrão...")
+        try:
+            cur_destino.execute("SET synchronous_commit = on;")
+            cur_destino.execute("SET fsync = on;")
+            cur_destino.execute("SET work_mem = '4MB';")
+            cur_destino.execute("SET maintenance_work_mem = '64MB';")
+            # Reabilitar autovacuum
+            cur_destino.execute("ALTER TABLE pluviometricos SET (autovacuum_enabled = true);")
+            conn_destino.commit()
+            print("   ✅ Configurações restauradas.")
+        except Exception as e:
+            print(f"   ⚠️  Erro ao restaurar configurações: {e}")
+        
+        print(f"\n⏱️  Tempo total de carga: {tempo_total:.1f} segundos ({tempo_total/60:.1f} minutos)")
+        if total_inseridos > 0:
+            velocidade_media = total_inseridos / tempo_total
+            print(f"📊 Velocidade média: {velocidade_media:.0f} registros/segundo")
         
         # Estatísticas finais
         cur_destino.execute("SELECT COUNT(*), MIN(dia), MAX(dia) FROM pluviometricos;")
