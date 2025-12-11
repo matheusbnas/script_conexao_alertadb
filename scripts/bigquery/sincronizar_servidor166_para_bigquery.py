@@ -2,24 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-🌧️ SINCRONIZAÇÃO INCREMENTAL - NIMBUS → BigQuery
+🌧️ SINCRONIZAÇÃO INCREMENTAL - Servidor 166 → BigQuery
 
 ═══════════════════════════════════════════════════════════════════════════
 🎯 PROPÓSITO DESTE SCRIPT:
 ═══════════════════════════════════════════════════════════════════════════
 
 Este script sincroniza APENAS os dados NOVOS desde a última sincronização
-do banco NIMBUS para o BigQuery, executando de forma incremental.
+do banco alertadb_cor (servidor 166) para o BigQuery, executando de forma incremental.
 
 ARQUITETURA:
-    NIMBUS (alertadb) → Parquet → BigQuery (incremental)
+    NIMBUS → Servidor 166 (alertadb_cor) → Parquet → BigQuery (incremental)
               ↑ [ESTE SCRIPT - SINCRONIZAÇÃO INCREMENTAL]
-
-QUERY UTILIZADA:
-    ✅ DISTINCT ON (el."horaLeitura", el.estacao_id)
-    ✅ WHERE horaLeitura > ultima_sincronizacao
-    ✅ ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC
-    ✅ Mesma lógica de sincronizar_pluviometricos_novos.py
+              Dataset: alertadb_cor166_raw (identifica origem: NIMBUS → servidor166 → BigQuery)
 
 VANTAGENS:
     ✅ Sincronização incremental (apenas dados novos)
@@ -27,38 +22,42 @@ VANTAGENS:
     ✅ Ideal para cron (executa a cada 5 minutos)
     ✅ BigQuery sempre atualizado
     ✅ Formato Parquet (otimizado)
+    ✅ Controle total dos dados (você é admin do banco)
 
 ═══════════════════════════════════════════════════════════════════════════
 📋 O QUE ESTE SCRIPT FAZ:
 ═══════════════════════════════════════════════════════════════════════════
 
+✅ Cria dataset alertadb_cor166_raw se não existir
+✅ Cria tabela pluviometricos com TIMESTAMP (igual ao servidor166)
 ✅ Busca último timestamp no BigQuery (MAX(dia))
-✅ Busca APENAS dados novos desde esse timestamp no NIMBUS
+✅ Busca APENAS dados novos desde esse timestamp no servidor 166
 ✅ Exporta para formato Parquet
 ✅ Carrega no BigQuery usando WRITE_APPEND
 ✅ Processa em lotes para otimizar memória
-✅ Preserva tipos de dados e timezone corretamente
+✅ Usa TIMESTAMP para coluna dia (igual ao servidor166)
+✅ Converte timezone para UTC (padrão BigQuery)
 
 ═══════════════════════════════════════════════════════════════════════════
 ⚠️ QUANDO USAR ESTE SCRIPT:
 ═══════════════════════════════════════════════════════════════════════════
 
-✅ APÓS executar exportar_nimbus_para_bigquery.py (carga inicial)
+✅ APÓS executar exportar_servidor166_para_bigquery.py (carga inicial)
 ✅ Para manter os dados atualizados automaticamente via cron
 ✅ Em produção/servidor para sincronização contínua
 ✅ Quando você precisa de dados atualizados a cada 5 minutos
 
 ⚠️ NÃO USE se:
-   ❌ A tabela BigQuery estiver vazia (use exportar_nimbus_para_bigquery.py primeiro)
-   ❌ Você quer carregar dados históricos (use exportar_nimbus_para_bigquery.py)
+   ❌ A tabela BigQuery estiver vazia (use exportar_servidor166_para_bigquery.py primeiro)
+   ❌ Você quer carregar dados históricos (use exportar_servidor166_para_bigquery.py)
 
 ═══════════════════════════════════════════════════════════════════════════
 🚀 COMO USAR:
 ═══════════════════════════════════════════════════════════════════════════
 
-1. PRIMEIRO: Execute exportar_nimbus_para_bigquery.py para carga inicial
+1. PRIMEIRO: Execute exportar_servidor166_para_bigquery.py para carga inicial
 2. Configure o arquivo .env com as credenciais
-3. Execute: python sincronizar_nimbus_para_bigquery.py --once
+3. Execute: python sincronizar_servidor166_para_bigquery.py --once
 4. Configure cron para executar a cada 5 minutos
 
 ═══════════════════════════════════════════════════════════════════════════
@@ -66,7 +65,7 @@ VANTAGENS:
 
 import psycopg2
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
@@ -94,21 +93,22 @@ def obter_variavel(nome, obrigatoria=True, padrao=None):
 def carregar_configuracoes():
     """Carrega configurações do .env."""
     try:
-        # Banco ORIGEM - NIMBUS (alertadb)
+        # Banco ORIGEM - Servidor 166 (alertadb_cor)
         origem = {
-            'host': obter_variavel('DB_ORIGEM_HOST'),
-            'port': obter_variavel('DB_ORIGEM_PORT', obrigatoria=False, padrao='5432'),
-            'dbname': obter_variavel('DB_ORIGEM_NAME'),
-            'user': obter_variavel('DB_ORIGEM_USER'),
-            'password': obter_variavel('DB_ORIGEM_PASSWORD'),
-            'sslmode': obter_variavel('DB_ORIGEM_SSLMODE', obrigatoria=False, padrao='disable'),
+            'host': obter_variavel('DB_DESTINO_HOST'),
+            'port': obter_variavel('DB_DESTINO_PORT', obrigatoria=False, padrao='5432'),
+            'dbname': obter_variavel('DB_DESTINO_NAME'),
+            'user': obter_variavel('DB_DESTINO_USER'),
+            'password': obter_variavel('DB_DESTINO_PASSWORD'),
+            'sslmode': obter_variavel('DB_DESTINO_SSLMODE', obrigatoria=False, padrao='disable'),
             'connect_timeout': 10
         }
 
         # BigQuery
+        # Dataset específico para dados do servidor166 (NIMBUS → servidor166 → BigQuery)
         bigquery_config = {
             'project_id': obter_variavel('BIGQUERY_PROJECT_ID'),
-            'dataset_id': obter_variavel('BIGQUERY_DATASET_ID_NIMBUS', obrigatoria=False, padrao='alertadb_cor_raw'),
+            'dataset_id': obter_variavel('BIGQUERY_DATASET_ID_SERVIDOR166', obrigatoria=False, padrao='alertadb_166_raw'),
             'table_id': obter_variavel('BIGQUERY_TABLE_ID', obrigatoria=False, padrao='pluviometricos'),
             'credentials_path': obter_variavel('BIGQUERY_CREDENTIALS_PATH', obrigatoria=False),
         }
@@ -134,8 +134,8 @@ def obter_credenciais_bigquery(credentials_path=None):
     except Exception:
         raise ValueError("❌ Credenciais do BigQuery não encontradas. Configure BIGQUERY_CREDENTIALS_PATH ou coloque credentials.json em credentials/")
 
-def testar_conexao_nimbus(origem):
-    """Testa conexão com banco NIMBUS."""
+def testar_conexao_servidor166(origem):
+    """Testa conexão com banco servidor 166."""
     try:
         # Codificar usuário e senha para URL (trata caracteres especiais)
         user_encoded = quote_plus(origem['user'])
@@ -146,18 +146,67 @@ def testar_conexao_nimbus(origem):
             connect_args={'sslmode': origem['sslmode'], 'connect_timeout': origem['connect_timeout']}
         )
         with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+            conn.execute("SELECT 1")
         return True
     except Exception as e:
-        print(f"❌ Erro ao conectar ao NIMBUS: {e}")
+        print(f"❌ Erro ao conectar ao servidor 166: {e}")
+        return False
+
+def criar_dataset_se_nao_existir(client, dataset_id):
+    """Cria dataset no BigQuery se não existir."""
+    try:
+        dataset_ref = client.dataset(dataset_id)
+        try:
+            client.get_dataset(dataset_ref)
+            print(f"✅ Dataset '{dataset_id}' já existe.")
+        except Exception:
+            # Dataset não existe, criar
+            dataset = bigquery.Dataset(dataset_ref)
+            dataset.location = "US"  # Ou outra região conforme necessário
+            dataset.description = f"Dataset para dados do servidor166 (NIMBUS → servidor166 → BigQuery)"
+            dataset = client.create_dataset(dataset, exists_ok=False)
+            print(f"✅ Dataset '{dataset_id}' criado com sucesso!")
+        return True
+    except Exception as e:
+        print(f"⚠️  Erro ao criar dataset: {e}")
+        return False
+
+def criar_tabela_com_schema(client, dataset_id, table_id, schema):
+    """Cria tabela no BigQuery com schema e particionamento se não existir."""
+    try:
+        table_ref = client.dataset(dataset_id).table(table_id)
+        
+        try:
+            table = client.get_table(table_ref)
+            print(f"✅ Tabela '{table_id}' já existe com schema ({len(table.schema)} campos).")
+            return True
+        except Exception:
+            # Tabela não existe, criar
+            pass
+        
+        # Criar tabela com schema e particionamento
+        table = bigquery.Table(table_ref, schema=schema)
+        table.description = "Dados pluviométricos do servidor166 (NIMBUS → servidor166 → BigQuery)"
+        # Como dia é TIMESTAMP, usar particionamento por coluna
+        table.time_partitioning = bigquery.TimePartitioning(
+            type_=bigquery.TimePartitioningType.DAY,
+            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+        )
+        table = client.create_table(table, exists_ok=False)
+        print(f"✅ Tabela '{table_id}' criada com schema e particionamento por coluna 'dia'!")
+        return True
+    except Exception as e:
+        print(f"⚠️  Erro ao criar tabela: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
-    """Obtém o último timestamp sincronizado do BigQuery (formato STRING)."""
+    """Obtém o último timestamp sincronizado do BigQuery (TIMESTAMP)."""
     try:
-        # Como dia é STRING, precisamos converter para TIMESTAMP para comparar
+        # Como dia é TIMESTAMP, podemos usar MAX diretamente
         query = f"""
-        SELECT MAX(PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%S.%E* %z', dia)) as ultima_sincronizacao
+        SELECT MAX(dia) as ultima_sincronizacao
         FROM `{client.project}.{dataset_id}.{table_id}`
         """
         
@@ -169,7 +218,8 @@ def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
                 # Converter para datetime com timezone
                 ultima_sync = row.ultima_sincronizacao
                 if isinstance(ultima_sync, datetime):
-                    # Se não tem timezone, assumir UTC
+                    # BigQuery retorna TIMESTAMP em UTC, mas sem timezone info
+                    # Assumir UTC
                     if ultima_sync.tzinfo is None:
                         ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
                     return ultima_sync
@@ -182,44 +232,84 @@ def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
         # Retornar data de referência em caso de erro
         return datetime(1997, 1, 1, tzinfo=timezone.utc)
 
+def processar_dia_timestamp(dt):
+    """Processa datetime para TIMESTAMP do BigQuery (UTC) - igual ao servidor166"""
+    if pd.isna(dt):
+        return None
+    try:
+        # Converter para datetime preservando timezone
+        if isinstance(dt, str):
+            dt_parsed = pd.to_datetime(dt)
+        elif isinstance(dt, pd.Timestamp):
+            dt_parsed = dt
+        else:
+            dt_parsed = pd.to_datetime(dt)
+        
+        # Se tem timezone, converter para UTC (BigQuery armazena em UTC)
+        if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+            # Converter para UTC
+            dt_utc = dt_parsed.tz_convert('UTC')
+            # Remover timezone para BigQuery (ele armazena como UTC internamente)
+            return dt_utc.tz_localize(None)
+        elif isinstance(dt_parsed, pd.Timestamp):
+            # Sem timezone, assumir que já está no timezone correto
+            # Converter para UTC assumindo que está em America/Sao_Paulo
+            from datetime import timezone, timedelta
+            tz_brasil = timezone(timedelta(hours=-3))
+            dt_com_tz = dt_parsed.tz_localize(tz_brasil)
+            dt_utc = dt_com_tz.tz_convert('UTC')
+            return dt_utc.tz_localize(None)
+        else:
+            return dt_parsed
+    except Exception as e:
+        return None
+
 def query_dados_incrementais(ultima_sincronizacao):
     """Retorna query para buscar apenas dados novos desde a última sincronização."""
-    # Converter timestamp para string formatada para PostgreSQL
+    # Converter timestamp UTC do BigQuery para timestamp do PostgreSQL (servidor166)
+    # O servidor 166 tem coluna dia como TIMESTAMP (sem timezone), então precisamos converter
     if isinstance(ultima_sincronizacao, datetime):
-        # Converter para timezone do Brasil se necessário
+        # Se tem timezone, converter para UTC primeiro
         if ultima_sincronizacao.tzinfo:
-            # Converter para UTC primeiro, depois para timezone do Brasil
+            # Converter para UTC
             utc_time = ultima_sincronizacao.astimezone(timezone.utc)
-            # Formatar para PostgreSQL com timezone
-            timestamp_str = utc_time.strftime('%Y-%m-%d %H:%M:%S')
+            # Converter para timezone do Brasil para comparar com dados do servidor166
+            from datetime import timedelta
+            tz_brasil = timezone(timedelta(hours=-3))
+            brasil_time = utc_time.astimezone(tz_brasil)
+            # Formatar para PostgreSQL (sem timezone, pois servidor166 usa TIMESTAMP sem timezone)
+            timestamp_str = brasil_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
-            timestamp_str = ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S')
+            # Sem timezone, assumir que já está em UTC e converter para Brasil
+            from datetime import timedelta
+            tz_utc = timezone.utc
+            tz_brasil = timezone(timedelta(hours=-3))
+            dt_utc = ultima_sincronizacao.replace(tzinfo=tz_utc)
+            brasil_time = dt_utc.astimezone(tz_brasil)
+            timestamp_str = brasil_time.strftime('%Y-%m-%d %H:%M:%S')
     else:
         timestamp_str = str(ultima_sincronizacao)
     
+    # Servidor166 usa TIMESTAMP (sem timezone), então usar timestamp simples
     return f"""
-SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    el."horaLeitura" AS "Dia",
-    elc.m05,
-    elc.m10,
-    elc.m15,
-    elc.h01,
-    elc.h04,
-    elc.h24,
-    elc.h96,
-    ee.nome AS "Estacao",
-    el.estacao_id
-FROM public.estacoes_leitura AS el
-JOIN public.estacoes_leiturachuva AS elc
-    ON elc.leitura_id = el.id
-JOIN public.estacoes_estacao AS ee
-    ON ee.id = el.estacao_id
-WHERE el."horaLeitura" > '{timestamp_str}'::timestamptz
-ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
+SELECT 
+    dia,
+    m05,
+    m10,
+    m15,
+    h01,
+    h04,
+    h24,
+    h96,
+    estacao,
+    estacao_id
+FROM pluviometricos
+WHERE dia > '{timestamp_str}'::timestamp
+ORDER BY dia ASC, estacao_id ASC;
 """
 
 def sincronizar_incremental():
-    """Sincroniza apenas dados novos do NIMBUS para BigQuery."""
+    """Sincroniza apenas dados novos do servidor 166 para BigQuery."""
     ORIGEM, BIGQUERY_CONFIG = carregar_configuracoes()
     
     # Obter credenciais BigQuery
@@ -236,19 +326,39 @@ def sincronizar_incremental():
     table_ref = f"{BIGQUERY_CONFIG['project_id']}.{dataset_id}.{table_id}"
     
     print("=" * 80)
-    print("🌧️ SINCRONIZAÇÃO INCREMENTAL - NIMBUS → BigQuery")
+    print("🌧️ SINCRONIZAÇÃO INCREMENTAL - Servidor 166 → BigQuery")
     print("=" * 80)
     print(f"📊 Dataset: {dataset_id}")
     print(f"📋 Tabela: {table_id}")
     print("=" * 80)
     
-    # Testar conexão NIMBUS
-    print("\n🔍 Testando conexão com NIMBUS...")
-    if not testar_conexao_nimbus(ORIGEM):
-        print("❌ Falha na conexão com NIMBUS!")
+    # Testar conexão servidor 166
+    print("\n🔍 Testando conexão com servidor 166...")
+    if not testar_conexao_servidor166(ORIGEM):
+        print("❌ Falha na conexão com servidor 166!")
         return False
     
-    print("✅ Conexão com NIMBUS: OK")
+    print("✅ Conexão com servidor 166: OK")
+    
+    # Criar dataset se não existir
+    print("\n📋 Verificando dataset...")
+    criar_dataset_se_nao_existir(client, dataset_id)
+    
+    # Criar tabela se não existir
+    print("\n📋 Verificando tabela...")
+    schema = [
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição (no formato Y-m-d H:M:S)"),
+        bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h01", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h04", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h24", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h96", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
+    ]
+    criar_tabela_com_schema(client, dataset_id, table_id, schema)
     
     # Obter última sincronização do BigQuery
     print("\n🔍 Obtendo última sincronização do BigQuery...")
@@ -256,7 +366,7 @@ def sincronizar_incremental():
     
     if ultima_sincronizacao == datetime(1997, 1, 1, tzinfo=timezone.utc):
         print("⚠️  Tabela BigQuery está vazia ou não encontrada!")
-        print("   Execute PRIMEIRO: python scripts/bigquery/exportar_nimbus_para_bigquery.py")
+        print("   Execute PRIMEIRO: python scripts/bigquery/exportar_servidor166_para_bigquery.py")
         print("   para fazer a carga inicial dos dados históricos.")
         return False
     
@@ -276,8 +386,8 @@ def sincronizar_incremental():
     print(f"\n🔍 Buscando dados novos desde {ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S %Z')}...")
     query = query_dados_incrementais(ultima_sincronizacao)
     
-    # Processar em chunks
-    chunksize = 25000
+    # Processar em chunks (reduzido para evitar problemas de memória)
+    chunksize = 10000  # Reduzido de 25000 para evitar erro de memória
     total_registros = 0
     parquet_files = []
     
@@ -288,50 +398,9 @@ def sincronizar_incremental():
                 print("   ℹ️  Nenhum dado novo encontrado.")
                 break
             
-            # Processar chunk
-            chunk_df = chunk_df.rename(columns={
-                'Dia': 'dia',
-                'Estacao': 'estacao'
-            })
-            
-            # Formatar coluna dia como STRING no formato exato da NIMBUS
-            # Formato: 2009-02-16 02:12:20.000 -0300 (exatamente como vem da NIMBUS)
-            def formatar_dia_nimbus(dt):
-                """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300"""
-                if pd.isna(dt):
-                    return None
-                try:
-                    if isinstance(dt, str):
-                        dt_parsed = pd.to_datetime(dt)
-                    elif isinstance(dt, pd.Timestamp):
-                        dt_parsed = dt
-                    else:
-                        dt_parsed = pd.to_datetime(dt)
-                    
-                    offset_str = "-0300"  # Padrão Brasil
-                    if isinstance(dt_parsed, pd.Timestamp):
-                        if dt_parsed.tz is not None:
-                            offset = dt_parsed.tz.utcoffset(dt_parsed)
-                            if offset:
-                                total_seconds = offset.total_seconds()
-                                hours = int(total_seconds // 3600)
-                                minutes = int((abs(total_seconds) % 3600) // 60)
-                                # Formato: -0300 (sem dois pontos, como na NIMBUS)
-                                offset_str = f"{hours:+03d}{minutes:02d}"
-                    
-                    timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
-                    if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
-                        microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
-                        timestamp_str += f".{microsec_str}"
-                    else:
-                        timestamp_str += ".000"
-                    
-                    return f"{timestamp_str} {offset_str}"
-                except Exception:
-                    return None
-            
-            # Converter coluna dia para STRING no formato exato da NIMBUS
-            chunk_df['dia'] = chunk_df['dia'].apply(formatar_dia_nimbus)
+            # Processar coluna dia como TIMESTAMP (igual ao servidor166)
+            # Converter para UTC (BigQuery armazena em UTC)
+            chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
             
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
             
@@ -340,11 +409,26 @@ def sincronizar_incremental():
             for col in numeric_cols:
                 chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
             
+            # Filtrar registros com dia NULL (BigQuery não aceita NULL em campo REQUIRED)
+            chunk_df = chunk_df[chunk_df['dia'].notna()]
+            
+            if len(chunk_df) == 0:
+                continue
+            
+            # Converter dia para datetime64[us] para Parquet (precisão de microsegundos)
+            chunk_df['dia'] = pd.to_datetime(chunk_df['dia'], errors='coerce')
+            
             # Salvar chunk em Parquet temporário
             with tempfile.NamedTemporaryFile(delete=False, suffix='.parquet') as tmp_file:
                 tmp_path = tmp_file.name
             
-            chunk_df.to_parquet(tmp_path, index=False)
+            chunk_df.to_parquet(
+                tmp_path, 
+                index=False,
+                engine='pyarrow',
+                compression='snappy',
+                coerce_timestamps='us'  # Precisão de microsegundos (igual ao servidor166)
+            )
             parquet_files.append(tmp_path)
             
             total_registros += len(chunk_df)
@@ -361,8 +445,10 @@ def sincronizar_incremental():
         # Carregar arquivos Parquet no BigQuery
         print(f"\n📤 Carregando {total_registros:,} registros no BigQuery...")
         
+        # Schema do BigQuery - MESMA estrutura do servidor166
+        # Coluna dia como TIMESTAMP (igual ao servidor166 que usa TIMESTAMP)
         schema = [
-            bigquery.SchemaField("dia", "STRING", mode="REQUIRED", description="Data/hora no formato exato da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
+            bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição (no formato Y-m-d H:M:S)"),
             bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
@@ -428,10 +514,10 @@ def main():
         else:
             # Modo interativo
             print("=" * 80)
-            print("🌧️ SINCRONIZAÇÃO INCREMENTAL - NIMBUS → BigQuery")
+            print("🌧️ SINCRONIZAÇÃO INCREMENTAL - Servidor 166 → BigQuery")
             print("=" * 80)
             print("\n⚠️  Para usar com cron, execute com --once:")
-            print("   python scripts/bigquery/sincronizar_nimbus_para_bigquery.py --once")
+            print("   python scripts/bigquery/sincronizar_servidor166_para_bigquery.py --once")
             print("\n🔄 Executando sincronização única...\n")
             sucesso = sincronizar_incremental()
             if sucesso:

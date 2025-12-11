@@ -19,13 +19,13 @@
 #
 # ============================================================================
 
-# Tipo de sincronização (normal, cloudsql ou bigquery)
+# Tipo de sincronização (normal, cloudsql, bigquery ou bigquery_servidor166)
 TIPO="${1:-normal}"
 
 # Validar tipo
-if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ] && [ "$TIPO" != "bigquery" ]; then
-    echo "❌ ERRO: Tipo inválido. Use 'normal', 'cloudsql' ou 'bigquery'"
-    echo "Uso: $0 [normal|cloudsql|bigquery]"
+if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ] && [ "$TIPO" != "bigquery" ] && [ "$TIPO" != "bigquery_servidor166" ]; then
+    echo "❌ ERRO: Tipo inválido. Use 'normal', 'cloudsql', 'bigquery' ou 'bigquery_servidor166'"
+    echo "Uso: $0 [normal|cloudsql|bigquery|bigquery_servidor166]"
     exit 1
 fi
 
@@ -37,7 +37,9 @@ CRON_JOB="*/5 * * * * $CRON_SCRIPT $TIPO"
 if [ "$TIPO" = "cloudsql" ]; then
     TIPO_DESCRICAO="Cloud SQL"
 elif [ "$TIPO" = "bigquery" ]; then
-    TIPO_DESCRICAO="BigQuery"
+    TIPO_DESCRICAO="BigQuery (NIMBUS)"
+elif [ "$TIPO" = "bigquery_servidor166" ]; then
+    TIPO_DESCRICAO="BigQuery (Servidor 166)"
 else
     TIPO_DESCRICAO="Normal (Servidor 166)"
 fi

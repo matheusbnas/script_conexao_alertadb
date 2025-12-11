@@ -26,13 +26,13 @@
 #
 # ============================================================================
 
-# Tipo de sincronização (normal, cloudsql ou bigquery)
+# Tipo de sincronização (normal, cloudsql, bigquery ou bigquery_servidor166)
 TIPO="${1:-normal}"
 
 # Validar tipo
-if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ] && [ "$TIPO" != "bigquery" ]; then
-    echo "❌ ERRO: Tipo inválido. Use 'normal', 'cloudsql' ou 'bigquery'" >&2
-    echo "Uso: $0 [normal|cloudsql|bigquery]" >&2
+if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ] && [ "$TIPO" != "bigquery" ] && [ "$TIPO" != "bigquery_servidor166" ]; then
+    echo "❌ ERRO: Tipo inválido. Use 'normal', 'cloudsql', 'bigquery' ou 'bigquery_servidor166'" >&2
+    echo "Uso: $0 [normal|cloudsql|bigquery|bigquery_servidor166]" >&2
     exit 1
 fi
 
@@ -59,7 +59,11 @@ if [ "$TIPO" = "cloudsql" ]; then
 elif [ "$TIPO" = "bigquery" ]; then
     SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_nimbus_para_bigquery.py"
     LOG_FILE="$LOG_DIR/bigquery_$(date +%Y%m%d_%H%M%S).log"
-    TIPO_DESCRICAO="BigQuery"
+    TIPO_DESCRICAO="BigQuery (NIMBUS)"
+elif [ "$TIPO" = "bigquery_servidor166" ]; then
+    SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_servidor166_para_bigquery.py"
+    LOG_FILE="$LOG_DIR/bigquery_servidor166_$(date +%Y%m%d_%H%M%S).log"
+    TIPO_DESCRICAO="BigQuery (Servidor 166)"
 else
     SCRIPT_PATH="$PROJECT_ROOT/scripts/servidor166/sincronizar_pluviometricos_novos.py"
     LOG_FILE="$LOG_DIR/sincronizacao_$(date +%Y%m%d_%H%M%S).log"

@@ -15,6 +15,7 @@ Guia completo para integração com Google BigQuery, incluindo configuração, c
 7. [Visualizar Dados](#visualizar-dados)
 8. [Formato dos Dados](#formato-dos-dados)
 9. [Automação](#automação)
+10. [Compartilhar Acesso](#compartilhar-acesso)
 
 ---
 
@@ -594,6 +595,35 @@ grep -i error /var/log/bigquery_export.log
 
 ---
 
+## 🔐 Compartilhar Acesso
+
+Para conceder acesso de **somente leitura** (consulta) no BigQuery para clientes usando Service Accounts, consulte o guia completo:
+
+📚 **[Guia Completo: Compartilhar Acesso ao BigQuery](BIGQUERY_COMPARTILHAR_ACESSO.md)**
+
+### Resumo Rápido
+
+**Service Account do Cliente:**
+- Email: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
+- Project ID: `rj-cor`
+
+**Como Conceder Acesso:**
+
+1. **Via Console GCP:**
+   - BigQuery → Dataset → Share dataset
+   - Adicionar: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
+   - Role: **BigQuery Data Viewer** (somente leitura)
+   - Salvar
+
+2. **Via CLI:**
+   ```bash
+   bq add-iam-member \
+     --member="serviceAccount:lncc-cefet@rj-cor.iam.gserviceaccount.com" \
+     --role="roles/bigquery.dataViewer" \
+     "alertadb-cor:alertadb_cor_raw"
+   ```
+---
+
 ## 📚 Links Úteis
 
 - **BigQuery Console:** https://console.cloud.google.com/bigquery
@@ -601,6 +631,7 @@ grep -i error /var/log/bigquery_export.log
 - **BigQuery Connections:** https://console.cloud.google.com/bigquery/connections
 - **GCP Projects:** https://console.cloud.google.com/cloud-resource-manager
 - **Documentação BigQuery:** https://cloud.google.com/bigquery/docs
+- **Compartilhar Acesso:** [BIGQUERY_COMPARTILHAR_ACESSO.md](BIGQUERY_COMPARTILHAR_ACESSO.md)
 
 ---
 
