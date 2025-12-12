@@ -21,7 +21,7 @@ VANTAGENS:
     ✅ Dados já validados e tratados no servidor 166
     ✅ BigQuery otimizado para análises
     ✅ Formato Parquet (5-10x mais rápido que CSV)
-    ✅ Coluna dia no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300
+    ✅ Coluna dia como TIMESTAMP (timestamptz NOT NULL no banco original da NIMBUS)
 
 ═══════════════════════════════════════════════════════════════════════════
 📋 O QUE ESTE SCRIPT FAZ:
@@ -33,7 +33,7 @@ VANTAGENS:
 ✅ Carrega no BigQuery automaticamente
 ✅ Cria/atualiza tabela no BigQuery
 ✅ Processa em lotes para otimizar memória
-✅ Preserva formato original da coluna dia (STRING)
+✅ Preserva formato original da coluna dia (TIMESTAMP - timestamptz NOT NULL)
 
 ═══════════════════════════════════════════════════════════════════════════
 📋 CONFIGURAÇÃO:
@@ -52,6 +52,7 @@ Variáveis opcionais:
 import psycopg2
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
@@ -139,10 +140,14 @@ def testar_conexao_servidor166(origem):
         return False
 
 def query_todos_dados():
-    """Retorna query para buscar TODOS os dados do servidor 166."""
+    """Retorna query para buscar TODOS os dados do servidor 166.
+    
+    A coluna 'dia' é TIMESTAMPTZ NOT NULL no servidor 166, preservando o timezone original da NIMBUS.
+    O pandas/SQLAlchemy preserva automaticamente o timezone ao ler TIMESTAMPTZ.
+    """
     return """
 SELECT 
-    dia,
+    dia,  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
     m05,
     m10,
     m15,
@@ -189,14 +194,13 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
                     # Criar nova tabela com schema e particionamento
                     table = bigquery.Table(table_ref, schema=schema)
                     table.description = "Dados pluviométricos do servidor 166"
-                    # Particionar por MÊS ao invés de DIA para evitar limite de 10.000 partições
-                    # Dados desde 1997 = ~27 anos = ~324 meses (bem abaixo do limite)
+                    # Particionar por coluna dia (TIMESTAMP)
                     table.time_partitioning = bigquery.TimePartitioning(
-                        type_=bigquery.TimePartitioningType.MONTH,
-                        field="dia"  # Particionar por mês
+                        type_=bigquery.TimePartitioningType.DAY,
+                        field="dia"  # Particionamento por coluna dia (TIMESTAMP)
                     )
                     table = client.create_table(table)
-                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento por MÊS!")
+                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento por coluna 'dia'!")
                 else:
                     # Tabela vazia, recriar com schema e particionamento
                     print(f"   📋 Tabela vazia sem schema. Recriando com schema e particionamento...")
@@ -204,59 +208,60 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
                     # Criar nova tabela com schema e particionamento
                     table = bigquery.Table(table_ref, schema=schema)
                     table.description = "Dados pluviométricos do servidor 166"
-                    # Como dia é STRING, usar particionamento por data de ingestão
+                    # Particionar por coluna dia (TIMESTAMP)
                     table.time_partitioning = bigquery.TimePartitioning(
-                        type_=bigquery.TimePartitioningType.DAY  # Particionamento por data de ingestão
+                        type_=bigquery.TimePartitioningType.DAY,
+                        field="dia"  # Particionamento por coluna dia (TIMESTAMP)
                     )
                     table = client.create_table(table)
-                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento por data de ingestão!")
+                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento por coluna 'dia'!")
                 return True
             else:
                 # Verificar se já tem particionamento
-                if not table.time_partitioning:
+                if table.time_partitioning and table.time_partitioning.field:
+                    if table.time_partitioning.field != "dia":
+                        print(f"   ⚠️  Tabela '{table_id}' existe com particionamento por campo '{table.time_partitioning.field}'.")
+                        print(f"   💡 Precisamos recriar a tabela com particionamento por 'dia'.")
+                        print(f"   🔄 Deletando tabela para recriar com particionamento correto...")
+                        client.delete_table(table_ref)
+                        # Criar nova tabela com particionamento por coluna dia
+                        table = bigquery.Table(table_ref, schema=schema)
+                        table.description = "Dados pluviométricos do servidor 166"
+                        table.time_partitioning = bigquery.TimePartitioning(
+                            type_=bigquery.TimePartitioningType.DAY,
+                            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+                        )
+                        table = client.create_table(table)
+                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia'!")
+                    else:
+                        print(f"✅ Tabela '{table_id}' já existe com schema ({len(table.schema)} campos) e particionamento por coluna 'dia'!")
+                elif not table.time_partitioning:
                     # BigQuery não permite converter tabela não particionada em particionada
                     # Se a tabela está vazia, podemos deletar e recriar com particionamento
                     if table.num_rows == 0:
                         print(f"   📋 Tabela existe mas sem particionamento e está vazia.")
-                        print(f"   🔄 Recriando tabela com particionamento por data de ingestão...")
+                        print(f"   🔄 Recriando tabela com particionamento por coluna 'dia'...")
                         client.delete_table(table_ref)
-                        # Criar nova tabela com schema e particionamento
+                        # Criar nova tabela com particionamento por coluna dia
                         table = bigquery.Table(table_ref, schema=schema)
                         table.description = "Dados pluviométricos do servidor 166"
-                        # Como dia é STRING, usar particionamento por data de ingestão
                         table.time_partitioning = bigquery.TimePartitioning(
-                            type_=bigquery.TimePartitioningType.DAY  # Particionamento por data de ingestão
+                            type_=bigquery.TimePartitioningType.DAY,
+                            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
                         )
                         table = client.create_table(table)
-                        print(f"✅ Tabela '{table_id}' recriada com particionamento por data de ingestão!")
+                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia'!")
                     else:
                         # Tabela tem dados, não podemos converter
                         print(f"   ⚠️  Tabela '{table_id}' existe mas SEM particionamento e tem {table.num_rows:,} registros.")
                         print(f"   💡 BigQuery não permite converter tabela não particionada em particionada.")
                         print(f"   📋 Continuando sem particionamento (dados serão substituídos com WRITE_TRUNCATE).")
                         print(f"   💡 Para ter particionamento, delete a tabela manualmente e execute o script novamente.")
-                else:
-                    # Verificar se o particionamento é por campo (não permitido com STRING)
-                    if table.time_partitioning and table.time_partitioning.field:
-                        print(f"   ⚠️  Tabela '{table_id}' existe com particionamento por campo '{table.time_partitioning.field}'.")
-                        print(f"   💡 Como 'dia' agora é STRING, precisamos recriar a tabela sem particionamento por campo.")
-                        print(f"   🔄 Deletando tabela para recriar com particionamento por data de ingestão...")
-                        client.delete_table(table_ref)
-                        # Criar nova tabela com particionamento por data de ingestão
-                        table = bigquery.Table(table_ref, schema=schema)
-                        table.description = "Dados pluviométricos do servidor 166"
-                        table.time_partitioning = bigquery.TimePartitioning(
-                            type_=bigquery.TimePartitioningType.DAY  # Particionamento por data de ingestão
-                        )
-                        table = client.create_table(table)
-                        print(f"✅ Tabela '{table_id}' recriada com particionamento por data de ingestão!")
-                    else:
-                        print(f"✅ Tabela '{table_id}' já existe com schema ({len(table.schema)} campos) e particionamento!")
                 return True
         except Exception as e:
             # Tabela não existe, criar
             if "Not found" in str(e) or "404" in str(e) or "does not exist" in str(e).lower():
-                print(f"   📋 Criando tabela '{table_id}' com schema e particionamento por MÊS...")
+                print(f"   📋 Criando tabela '{table_id}' com schema e particionamento por coluna 'dia'...")
             else:
                 print(f"   ⚠️  Erro ao verificar tabela: {e}")
                 raise
@@ -264,14 +269,13 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
         # Criar tabela com schema e particionamento
         table = bigquery.Table(table_ref, schema=schema)
         table.description = "Dados pluviométricos do servidor 166"
-        # Como dia é STRING, não podemos usar particionamento por coluna
-        # Usar particionamento por data de ingestão (sem campo específico)
-        # Conforme: https://docs.cloud.google.com/bigquery/docs/partitioned-tables?hl=pt-br
+        # Particionar por coluna dia (TIMESTAMP)
         table.time_partitioning = bigquery.TimePartitioning(
-            type_=bigquery.TimePartitioningType.DAY  # Particionamento por data de ingestão
+            type_=bigquery.TimePartitioningType.DAY,
+            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
         )
         table = client.create_table(table, exists_ok=False)
-        print(f"✅ Tabela '{table_id}' criada com schema e particionamento por data de ingestão no BigQuery!")
+        print(f"✅ Tabela '{table_id}' criada com schema e particionamento por coluna 'dia' no BigQuery!")
         print(f"   💡 Particionamento melhora performance de queries e reduz custos")
         return True
     except Exception as e:
@@ -280,46 +284,48 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
         traceback.print_exc()
         return False
 
-def formatar_dia_nimbus(dt):
-    """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300"""
+def processar_dia_timestamp(dt):
+    """Processa TIMESTAMPTZ do PostgreSQL para TIMESTAMP do BigQuery (UTC).
+    
+    A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL (preserva timezone original da NIMBUS).
+    O BigQuery armazena TIMESTAMP em UTC internamente, então convertemos preservando o valor correto.
+    
+    IMPORTANTE: Preserva o timezone original do TIMESTAMPTZ antes de converter para UTC.
+    """
     if pd.isna(dt):
         return None
     try:
-        # Se já é string no formato correto, retornar como está
+        # Converter para pandas Timestamp se necessário
         if isinstance(dt, str):
-            # Verificar se já está no formato correto (tem timezone no final)
-            if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
-                return dt
-            # Tentar converter
+            # Tentar parsear preservando timezone se presente na string
             dt_parsed = pd.to_datetime(dt)
         elif isinstance(dt, pd.Timestamp):
             dt_parsed = dt
+        elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+            # Se já é datetime com timezone (TIMESTAMPTZ do PostgreSQL)
+            dt_parsed = pd.Timestamp(dt)
         else:
             dt_parsed = pd.to_datetime(dt)
         
-        # Extrair timezone offset
-        offset_str = "-0300"  # Padrão Brasil
-        if isinstance(dt_parsed, pd.Timestamp):
-            if dt_parsed.tz is not None:
-                offset = dt_parsed.tz.utcoffset(dt_parsed)
-                if offset:
-                    total_seconds = offset.total_seconds()
-                    hours = int(total_seconds // 3600)
-                    minutes = int((abs(total_seconds) % 3600) // 60)
-                    # Formato: -0300 (sem dois pontos, como na NIMBUS)
-                    offset_str = f"{hours:+03d}{minutes:02d}"
-        
-        # Formatar: 2009-02-16 02:12:20.000 -0300
-        timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
-        if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
-            # Pegar apenas os 3 primeiros dígitos dos microsegundos
-            microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
-            timestamp_str += f".{microsec_str}"
+        # Se já tem timezone (TIMESTAMPTZ do PostgreSQL), converter para UTC preservando o valor
+        if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+            # Converter para UTC mantendo o valor absoluto correto
+            dt_utc = dt_parsed.tz_convert('UTC')
+            # Remover timezone info para BigQuery (ele armazena como UTC internamente)
+            return dt_utc.tz_localize(None)
+        elif isinstance(dt_parsed, pd.Timestamp):
+            # Se não tem timezone, pode ser que o PostgreSQL retornou sem timezone
+            # Neste caso, assumir que já está no timezone do servidor (Brasil -03:00)
+            # e converter para UTC
+            from datetime import timezone, timedelta
+            tz_brasil = timezone(timedelta(hours=-3))
+            dt_com_tz = dt_parsed.tz_localize(tz_brasil)
+            dt_utc = dt_com_tz.tz_convert('UTC')
+            return dt_utc.tz_localize(None)
         else:
-            timestamp_str += ".000"
-        
-        return f"{timestamp_str} {offset_str}"
+            return dt_parsed
     except Exception as e:
+        print(f"      ⚠️  Erro ao processar timestamp: {e}")
         return None
 
 def exportar_para_bigquery():
@@ -347,8 +353,20 @@ def exportar_para_bigquery():
         )
         engine_servidor166 = create_engine(
             connection_string,
-            connect_args={'client_encoding': 'UTF8'},
-            pool_pre_ping=True
+            connect_args={
+                'client_encoding': 'UTF8',
+                'connect_timeout': 30,
+                'keepalives': 1,
+                'keepalives_idle': 30,
+                'keepalives_interval': 10,
+                'keepalives_count': 5,
+                'options': '-c statement_timeout=0'  # Desabilitar timeout de statement
+            },
+            pool_pre_ping=True,
+            pool_recycle=3600,  # Reciclar conexões após 1 hora
+            pool_size=5,
+            max_overflow=10,
+            echo=False
         )
         
         # Conectar ao BigQuery
@@ -374,9 +392,10 @@ def exportar_para_bigquery():
         criar_dataset_se_nao_existir(client_bq, BIGQUERY_CONFIG['dataset_id'])
         
         # Schema do BigQuery
-        # Coluna dia como STRING no formato exato da NIMBUS
+        # Coluna dia como TIMESTAMP (armazena em UTC, vem de TIMESTAMPTZ NOT NULL do servidor 166)
+        # O servidor 166 preserva o timezone original da NIMBUS como TIMESTAMPTZ
         schema = [
-            bigquery.SchemaField("dia", "STRING", mode="REQUIRED", description="Data/hora no formato exato da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
+            bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do servidor 166 (preserva timezone original da NIMBUS). Armazenado em UTC no BigQuery."),
             bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
@@ -414,16 +433,81 @@ def exportar_para_bigquery():
         
         print(f"   📊 Processando em chunks de {chunksize:,} registros...")
         print(f"   💡 Usando chunks menores para evitar problemas de memória")
+        print(f"   🔄 Configurações de conexão otimizadas para queries longas")
         
-        for chunk_df in pd.read_sql(query, engine_servidor166, chunksize=chunksize):
+        # Função auxiliar para ler chunk com retry
+        def ler_chunks_com_retry(query, engine_ref, chunksize, max_retries=3):
+            """Lê chunks com retry automático em caso de erro de conexão."""
+            tentativa_global = 0
+            
+            while tentativa_global < max_retries:
+                try:
+                    # Tentar criar iterator de chunks
+                    chunk_iterator = pd.read_sql(query, engine_ref['engine'], chunksize=chunksize)
+                    
+                    # Processar cada chunk
+                    for chunk_df in chunk_iterator:
+                        yield chunk_df
+                    
+                    # Se chegou aqui, leitura completa com sucesso
+                    return
+                    
+                except (psycopg2.OperationalError, psycopg2.InterfaceError,
+                        SQLAlchemyOperationalError) as e:
+                    tentativa_global += 1
+                    if tentativa_global < max_retries:
+                        wait_time = tentativa_global * 5
+                        print(f"      ⚠️  Erro de conexão (tentativa {tentativa_global}/{max_retries}): {str(e)[:100]}")
+                        print(f"      🔄 Reconectando em {wait_time}s...")
+                        import time
+                        time.sleep(wait_time)
+                        # Forçar reciclagem do pool de conexões
+                        try:
+                            engine_ref['engine'].dispose()
+                        except:
+                            pass
+                        # Recriar engine
+                        print(f"      🔄 Recriando conexão...")
+                        user_encoded = quote_plus(ORIGEM['user'])
+                        password_encoded = quote_plus(ORIGEM['password'])
+                        connection_string = (
+                            f"postgresql://{user_encoded}:{password_encoded}@"
+                            f"{ORIGEM['host']}:{ORIGEM['port']}/{ORIGEM['dbname']}"
+                        )
+                        engine_ref['engine'] = create_engine(
+                            connection_string,
+                            connect_args={
+                                'client_encoding': 'UTF8',
+                                'connect_timeout': 30,
+                                'keepalives': 1,
+                                'keepalives_idle': 30,
+                                'keepalives_interval': 10,
+                                'keepalives_count': 5,
+                                'options': '-c statement_timeout=0'
+                            },
+                            pool_pre_ping=True,
+                            pool_recycle=3600,
+                            pool_size=5,
+                            max_overflow=10
+                        )
+                    else:
+                        print(f"      ❌ Falha após {max_retries} tentativas")
+                        raise
+        
+        # Usar dicionário mutável para permitir atualização do engine
+        engine_ref = {'engine': engine_servidor166}
+        
+        # Ler chunks com retry automático
+        for chunk_df in ler_chunks_com_retry(query, engine_ref, chunksize):
             chunk_numero += 1
             
             if chunk_df.empty:
                 continue
             
-            # Converter coluna dia para STRING no formato exato da NIMBUS
-            # Formato: 2009-02-16 02:12:20.000 -0300 (igual ao dia_original)
-            chunk_df['dia'] = chunk_df['dia'].apply(formatar_dia_nimbus)
+            # Processar coluna dia: TIMESTAMPTZ do servidor 166 → TIMESTAMP (UTC) do BigQuery
+            # O servidor 166 tem TIMESTAMPTZ NOT NULL que preserva o timezone original da NIMBUS
+            # O BigQuery armazena TIMESTAMP em UTC, então convertemos preservando o valor correto
+            chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
             
             # Converter tipos
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
@@ -453,8 +537,12 @@ def exportar_para_bigquery():
             if len(chunks_list) >= batch_size:
                 df_batch = pd.concat(chunks_list, ignore_index=True)
                 
-                # Converter timestamp para microsegundos (BigQuery espera microsegundos)
-                if 'dia' in df_batch.columns and pd.api.types.is_datetime64_any_dtype(df_batch['dia']):
+                # Garantir que coluna dia está como datetime64[us] (microsegundos) para BigQuery
+                if 'dia' in df_batch.columns:
+                    if not pd.api.types.is_datetime64_any_dtype(df_batch['dia']):
+                        # Se não for datetime, tentar converter
+                        df_batch['dia'] = pd.to_datetime(df_batch['dia'], errors='coerce')
+                    # Converter para microsegundos (precisão do BigQuery TIMESTAMP)
                     df_batch['dia'] = df_batch['dia'].astype('datetime64[us]')
                 
                 batch_file = Path(temp_dir) / f'pluviometricos_batch_{batch_file_num:04d}.parquet'
@@ -480,15 +568,21 @@ def exportar_para_bigquery():
             df_batch = df_batch[df_batch['dia'].notna()]
             
             if len(df_batch) > 0:
-                # A coluna dia já está como STRING no formato da NIMBUS
-                # Não precisa converter timestamp
+                # Garantir que coluna dia está como datetime64[us] (microsegundos) para BigQuery
+                if 'dia' in df_batch.columns:
+                    if not pd.api.types.is_datetime64_any_dtype(df_batch['dia']):
+                        # Se não for datetime, tentar converter
+                        df_batch['dia'] = pd.to_datetime(df_batch['dia'], errors='coerce')
+                    # Converter para microsegundos (precisão do BigQuery TIMESTAMP)
+                    df_batch['dia'] = df_batch['dia'].astype('datetime64[us]')
                 
                 batch_file = Path(temp_dir) / f'pluviometricos_batch_{batch_file_num:04d}.parquet'
                 df_batch.to_parquet(
                     batch_file, 
                     index=False, 
                     engine='pyarrow', 
-                    compression='snappy'
+                    compression='snappy',
+                    coerce_timestamps='us'  # Forçar microsegundos para TIMESTAMP
                 )
                 parquet_files.append(batch_file)
                 print(f"      💾 Batch {batch_file_num} salvo: {batch_file.stat().st_size / (1024*1024):.2f} MB")
@@ -536,8 +630,17 @@ def exportar_para_bigquery():
         return 0
     
     finally:
-        if engine_servidor166:
-            engine_servidor166.dispose()
+        # Limpar conexões
+        if 'engine_ref' in locals() and engine_ref.get('engine'):
+            try:
+                engine_ref['engine'].dispose()
+            except:
+                pass
+        elif 'engine_servidor166' in locals() and engine_servidor166:
+            try:
+                engine_servidor166.dispose()
+            except:
+                pass
 
 def main():
     """Função principal."""

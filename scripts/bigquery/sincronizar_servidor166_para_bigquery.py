@@ -201,39 +201,65 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
         traceback.print_exc()
         return False
 
-def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
-    """Obtém o último timestamp sincronizado do BigQuery (TIMESTAMP)."""
+def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id, formatado=False):
+    """Obtém o último timestamp sincronizado do BigQuery (TIMESTAMP).
+    
+    Args:
+        formatado: Se True, retorna string formatada no formato NIMBUS. Se False, retorna datetime.
+    """
     try:
-        # Como dia é TIMESTAMP, podemos usar MAX diretamente
-        query = f"""
-        SELECT MAX(dia) as ultima_sincronizacao
-        FROM `{client.project}.{dataset_id}.{table_id}`
-        """
-        
-        query_job = client.query(query)
-        results = query_job.result()
-        
-        for row in results:
-            if row.ultima_sincronizacao:
-                # Converter para datetime com timezone
-                ultima_sync = row.ultima_sincronizacao
-                if isinstance(ultima_sync, datetime):
-                    # BigQuery retorna TIMESTAMP em UTC, mas sem timezone info
-                    # Assumir UTC
-                    if ultima_sync.tzinfo is None:
-                        ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
-                    return ultima_sync
-            break
-        
-        # Se não encontrou, retornar data de referência (1997-01-01)
-        return datetime(1997, 1, 1, tzinfo=timezone.utc)
+        if formatado:
+            # Retornar já formatado no formato NIMBUS: 2025-12-12 16:35:00.000 -0300
+            # Converter UTC para America/Sao_Paulo e formatar
+            query = f"""
+            SELECT FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S.%E3 %z', 
+                DATETIME(MAX(dia), 'America/Sao_Paulo')) as ultima_sincronizacao_formatada
+            FROM `{client.project}.{dataset_id}.{table_id}`
+            """
+            query_job = client.query(query)
+            results = query_job.result()
+            for row in results:
+                if row.ultima_sincronizacao_formatada:
+                    # Formato vem como '2025-12-12 16:35:00.000 -0300' mas pode ter dois pontos no timezone
+                    # Remover dois pontos do timezone se houver
+                    formatted = row.ultima_sincronizacao_formatada
+                    # Se tem formato -03:00, converter para -0300
+                    import re
+                    formatted = re.sub(r'([+-]\d{2}):(\d{2})$', r'\1\2', formatted)
+                    return formatted
+                break
+            return None
+        else:
+            # Retornar datetime (comportamento original)
+            query = f"""
+            SELECT MAX(dia) as ultima_sincronizacao
+            FROM `{client.project}.{dataset_id}.{table_id}`
+            """
+            query_job = client.query(query)
+            results = query_job.result()
+            
+            for row in results:
+                if row.ultima_sincronizacao:
+                    ultima_sync = row.ultima_sincronizacao
+                    if isinstance(ultima_sync, datetime):
+                        if ultima_sync.tzinfo is None:
+                            ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
+                        return ultima_sync
+                break
+            
+            return datetime(1997, 1, 1, tzinfo=timezone.utc)
     except Exception as e:
         print(f"⚠️  Erro ao obter última sincronização: {e}")
-        # Retornar data de referência em caso de erro
+        if formatado:
+            return None
         return datetime(1997, 1, 1, tzinfo=timezone.utc)
 
 def processar_dia_timestamp(dt):
-    """Processa datetime para TIMESTAMP do BigQuery (UTC) - igual ao servidor166"""
+    """Processa datetime para TIMESTAMP do BigQuery (UTC).
+    
+    A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL, então preserva o timezone original.
+    Converte para UTC para o BigQuery (que armazena TIMESTAMP em UTC internamente).
+    """
     if pd.isna(dt):
         return None
     try:
@@ -264,21 +290,106 @@ def processar_dia_timestamp(dt):
     except Exception as e:
         return None
 
+def formatar_timestamp_nimbus(dt):
+    """Formata timestamp no formato exato da NIMBUS: 2025-12-12 16:35:00.000 -0300
+    
+    Preserva o formato original como vem do banco da NIMBUS.
+    """
+    if not isinstance(dt, (datetime, pd.Timestamp)):
+        return str(dt)
+    
+    # Converter para datetime se for pd.Timestamp
+    if isinstance(dt, pd.Timestamp):
+        dt = dt.to_pydatetime()
+    
+    # Formatar data e hora
+    timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Adicionar milissegundos (3 dígitos)
+    if hasattr(dt, 'microsecond') and dt.microsecond:
+        microsec_str = str(dt.microsecond)[:3].zfill(3)
+        timestamp_str += f".{microsec_str}"
+    else:
+        timestamp_str += ".000"
+    
+    # Adicionar timezone no formato -0300 (sem dois pontos)
+    if dt.tzinfo:
+        offset = dt.tzinfo.utcoffset(dt)
+        if offset:
+            total_seconds = offset.total_seconds()
+            hours = int(total_seconds // 3600)
+            minutes = int((abs(total_seconds) % 3600) // 60)
+            # Formato: -0300 (sem dois pontos, como na NIMBUS)
+            offset_str = f"{hours:+03d}{minutes:02d}"
+            timestamp_str += f" {offset_str}"
+    else:
+        # Sem timezone, assumir -03:00 (padrão Brasil)
+        timestamp_str += " -0300"
+    
+    return timestamp_str
+
+def formatar_dia_original(dt):
+    """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300
+    
+    Preserva o formato STRING original como vem do banco da NIMBUS/servidor166.
+    """
+    if pd.isna(dt):
+        return None
+    try:
+        # Se já é string no formato correto, retornar como está
+        if isinstance(dt, str):
+            # Verificar se já está no formato correto (tem timezone no final)
+            if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                return dt
+            # Tentar converter
+            dt_parsed = pd.to_datetime(dt)
+        elif isinstance(dt, pd.Timestamp):
+            dt_parsed = dt
+        else:
+            dt_parsed = pd.to_datetime(dt)
+        
+        # Extrair timezone offset
+        offset_str = "-0300"  # Padrão Brasil
+        if isinstance(dt_parsed, pd.Timestamp):
+            if dt_parsed.tz is not None:
+                offset = dt_parsed.tz.utcoffset(dt_parsed)
+                if offset:
+                    total_seconds = offset.total_seconds()
+                    hours = int(total_seconds // 3600)
+                    minutes = int((abs(total_seconds) % 3600) // 60)
+                    # Formato: -0300 (sem dois pontos, como na NIMBUS)
+                    offset_str = f"{hours:+03d}{minutes:02d}"
+        
+        # Formatar: 2009-02-16 02:12:20.000 -0300
+        timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
+        if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
+            # Pegar apenas os 3 primeiros dígitos dos microsegundos
+            microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
+            timestamp_str += f".{microsec_str}"
+        else:
+            timestamp_str += ".000"
+        
+        return f"{timestamp_str} {offset_str}"
+    except Exception:
+        return None
+
 def query_dados_incrementais(ultima_sincronizacao):
     """Retorna query para buscar apenas dados novos desde a última sincronização."""
-    # Converter timestamp UTC do BigQuery para timestamp do PostgreSQL (servidor166)
-    # O servidor 166 tem coluna dia como TIMESTAMP (sem timezone), então precisamos converter
+    # Converter timestamp UTC do BigQuery para timestamptz do PostgreSQL (servidor166)
+    # O servidor 166 tem coluna dia como TIMESTAMPTZ NOT NULL, então precisamos preservar o timezone
     if isinstance(ultima_sincronizacao, datetime):
-        # Se tem timezone, converter para UTC primeiro
+        # Se tem timezone, converter para timezone do Brasil para comparar com dados do servidor166
         if ultima_sincronizacao.tzinfo:
-            # Converter para UTC
-            utc_time = ultima_sincronizacao.astimezone(timezone.utc)
-            # Converter para timezone do Brasil para comparar com dados do servidor166
+            # Converter para timezone do Brasil
             from datetime import timedelta
             tz_brasil = timezone(timedelta(hours=-3))
-            brasil_time = utc_time.astimezone(tz_brasil)
-            # Formatar para PostgreSQL (sem timezone, pois servidor166 usa TIMESTAMP sem timezone)
+            brasil_time = ultima_sincronizacao.astimezone(tz_brasil)
+            # Formatar para PostgreSQL com timezone (servidor166 usa TIMESTAMPTZ)
+            offset = brasil_time.tzinfo.utcoffset(brasil_time)
+            horas_offset = int(offset.total_seconds() / 3600)
+            minutos_offset = int((abs(offset.total_seconds()) % 3600) / 60)
             timestamp_str = brasil_time.strftime('%Y-%m-%d %H:%M:%S')
+            timestamp_str += f" {horas_offset:+03d}:{abs(minutos_offset):02d}"
         else:
             # Sem timezone, assumir que já está em UTC e converter para Brasil
             from datetime import timedelta
@@ -286,11 +397,19 @@ def query_dados_incrementais(ultima_sincronizacao):
             tz_brasil = timezone(timedelta(hours=-3))
             dt_utc = ultima_sincronizacao.replace(tzinfo=tz_utc)
             brasil_time = dt_utc.astimezone(tz_brasil)
+            # Formatar com timezone
+            offset = brasil_time.tzinfo.utcoffset(brasil_time)
+            horas_offset = int(offset.total_seconds() / 3600)
+            minutos_offset = int((abs(offset.total_seconds()) % 3600) / 60)
             timestamp_str = brasil_time.strftime('%Y-%m-%d %H:%M:%S')
+            timestamp_str += f" {horas_offset:+03d}:{abs(minutos_offset):02d}"
     else:
         timestamp_str = str(ultima_sincronizacao)
+        # Se não tem timezone na string, adicionar timezone do Brasil
+        if ':' not in timestamp_str or ('+' not in timestamp_str and '-' not in timestamp_str.split()[-1]):
+            timestamp_str += " -03:00"
     
-    # Servidor166 usa TIMESTAMP (sem timezone), então usar timestamp simples
+    # Servidor166 usa TIMESTAMPTZ NOT NULL, então usar timestamptz
     return f"""
 SELECT 
     dia,
@@ -304,7 +423,7 @@ SELECT
     estacao,
     estacao_id
 FROM pluviometricos
-WHERE dia > '{timestamp_str}'::timestamp
+WHERE dia > '{timestamp_str}'::timestamptz
 ORDER BY dia ASC, estacao_id ASC;
 """
 
@@ -347,7 +466,7 @@ def sincronizar_incremental():
     # Criar tabela se não existir
     print("\n📋 Verificando tabela...")
     schema = [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição (no formato Y-m-d H:M:S)"),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do servidor 166 (preserva timezone original da NIMBUS). Armazenado em UTC no BigQuery."),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
@@ -370,7 +489,8 @@ def sincronizar_incremental():
         print("   para fazer a carga inicial dos dados históricos.")
         return False
     
-    print(f"✅ Última sincronização: {ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    ultima_sync_formatada = obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id, formatado=True)
+    print(f"✅ Última sincronização: {ultima_sync_formatada}")
     
     # Criar engine SQLAlchemy para pandas
     # Codificar usuário e senha para URL (trata caracteres especiais)
@@ -383,7 +503,7 @@ def sincronizar_incremental():
     )
     
     # Buscar dados incrementais
-    print(f"\n🔍 Buscando dados novos desde {ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S %Z')}...")
+    print(f"\n🔍 Buscando dados novos desde {ultima_sync_formatada}...")
     query = query_dados_incrementais(ultima_sincronizacao)
     
     # Processar em chunks (reduzido para evitar problemas de memória)
@@ -398,8 +518,9 @@ def sincronizar_incremental():
                 print("   ℹ️  Nenhum dado novo encontrado.")
                 break
             
-            # Processar coluna dia como TIMESTAMP (igual ao servidor166)
+            # Processar ambas as colunas: dia (TIMESTAMP) e dia_original (STRING)
             # Converter para UTC (BigQuery armazena em UTC)
+            chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
             chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
             
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
@@ -446,9 +567,12 @@ def sincronizar_incremental():
         print(f"\n📤 Carregando {total_registros:,} registros no BigQuery...")
         
         # Schema do BigQuery - MESMA estrutura do servidor166
-        # Coluna dia como TIMESTAMP (igual ao servidor166 que usa TIMESTAMP)
+        # Coluna dia como TIMESTAMP (armazena em UTC, vem de TIMESTAMPTZ NOT NULL do servidor 166)
+        # O servidor 166 preserva o timezone original da NIMBUS como TIMESTAMPTZ
+        # Coluna dia_original como STRING preserva formato exato do banco original
         schema = [
-            bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição (no formato Y-m-d H:M:S)"),
+            bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do servidor 166 (preserva timezone original da NIMBUS). Armazenado em UTC no BigQuery."),
+            bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
             bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
@@ -483,9 +607,9 @@ def sincronizar_incremental():
         print(f"\n✅ Sincronização concluída!")
         print(f"   📊 Total sincronizado: {total_registros:,} registros")
         
-        # Obter novo último timestamp
-        nova_ultima_sincronizacao = obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id)
-        print(f"   🕐 Última sincronização atualizada: {nova_ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        # Obter novo último timestamp formatado
+        nova_ultima_sync_formatada = obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id, formatado=True)
+        print(f"   🕐 Última sincronização atualizada: {nova_ultima_sync_formatada}")
         
         return True
         

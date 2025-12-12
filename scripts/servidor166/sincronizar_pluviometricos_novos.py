@@ -27,6 +27,7 @@ para o banco alertadb_cor (destino).
 ✅ Atualiza dados existentes se houver mudanças no banco origem
 ✅ Garante que os dados no destino correspondam exatamente ao banco origem
 ✅ Adiciona novos registros e atualiza existentes quando necessário
+✅ Preserva timezone original (TIMESTAMPTZ NOT NULL) - mesma lógica do carregar_pluviometricos_historicos.py
 
 ═══════════════════════════════════════════════════════════════════════════
 ⚠️ QUANDO USAR ESTE SCRIPT:
@@ -192,6 +193,10 @@ def query_alertadb_incremental(ultima_sincronizacao):
     Usa DISTINCT ON para garantir apenas um registro por (dia, estacao_id),
     mantendo o registro com o maior ID (mais recente), que é exatamente como
     está no banco alertadb.
+    
+    IMPORTANTE: A coluna horaLeitura no banco NIMBUS é TIMESTAMPTZ NOT NULL,
+    preservando o timezone original. A query usa timestamptz para preservar
+    o timezone corretamente.
     """
     # Formatar timestamp corretamente para PostgreSQL
     # Se tem timezone, converter para string mantendo timezone
@@ -200,7 +205,7 @@ def query_alertadb_incremental(ultima_sincronizacao):
             # Converter para string com timezone para PostgreSQL
             offset = ultima_sincronizacao.tzinfo.utcoffset(ultima_sincronizacao)
             horas_offset = int(offset.total_seconds() / 3600)
-            minutos_offset = int((offset.total_seconds() % 3600) / 60)
+            minutos_offset = int((abs(offset.total_seconds()) % 3600) / 60)
             timestamp_str = ultima_sincronizacao.strftime('%Y-%m-%d %H:%M:%S')
             timestamp_str += f" {horas_offset:+03d}:{abs(minutos_offset):02d}"
         else:
@@ -208,12 +213,15 @@ def query_alertadb_incremental(ultima_sincronizacao):
     else:
         timestamp_str = str(ultima_sincronizacao)
     
-    # Usar timestamptz se o timestamp tem timezone, senão usar timestamp
-    if ':' in timestamp_str and ('+' in timestamp_str or '-' in timestamp_str.split()[-1]):
-        # Tem timezone, usar timestamptz
-        return f"""
+    # Usar sempre timestamptz (coluna horaLeitura no NIMBUS é TIMESTAMPTZ NOT NULL)
+    # Se não tem timezone na string, assumir timezone do Brasil (-03:00)
+    if ':' not in timestamp_str or ('+' not in timestamp_str and '-' not in timestamp_str.split()[-1]):
+        # Sem timezone explícito, adicionar timezone do Brasil
+        timestamp_str += " -03:00"
+    
+    return f"""
 SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    el."horaLeitura" AS "Dia",
+    el."horaLeitura" AS "Dia",  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
     elc.m05,
     elc.m10,
     elc.m15,
@@ -229,28 +237,6 @@ JOIN public.estacoes_leiturachuva AS elc
 JOIN public.estacoes_estacao AS ee
     ON ee.id = el.estacao_id
 WHERE el."horaLeitura" > '{timestamp_str}'::timestamptz
-ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
-"""
-    else:
-        # Sem timezone, usar timestamp
-        return f"""
-SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    el."horaLeitura" AS "Dia",
-    elc.m05,
-    elc.m10,
-    elc.m15,
-    elc.h01,
-    elc.h04,
-    elc.h24,
-    elc.h96,
-    ee.nome AS "Estacao",
-    el.estacao_id
-FROM public.estacoes_leitura AS el
-JOIN public.estacoes_leiturachuva AS elc
-    ON elc.leitura_id = el.id
-JOIN public.estacoes_estacao AS ee
-    ON ee.id = el.estacao_id
-WHERE el."horaLeitura" > '{timestamp_str}'::timestamp
 ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
 """
 
@@ -329,7 +315,6 @@ def garantir_datetime_com_timezone(valor):
     """
     Garante que o valor seja um objeto datetime mantendo o timezone original.
     IMPORTANTE: Preserva o timezone original (-02:00 para horário de verão ou -03:00 para horário padrão).
-    Similar à função no script de carga inicial.
     
     Args:
         valor: datetime, string ou outro tipo
@@ -340,31 +325,40 @@ def garantir_datetime_com_timezone(valor):
     resultado = None
     
     if isinstance(valor, datetime):
-        # Se já é datetime, manter como está (preserva -02:00 ou -03:00)
+        # Se já é datetime, manter como está (com ou sem timezone)
+        # IMPORTANTE: Preserva tanto -02:00 quanto -03:00
         resultado = valor
     elif isinstance(valor, str):
         try:
             # Tentar parse mantendo timezone se presente
-            # Formatos: "2025-11-28 11:40:00.000 -0300" ou "-0200" ou "-03:00" ou "-02:00"
+            # Formatos esperados:
+            # - "2025-11-28 11:40:00.000 -0300" (horário padrão)
+            # - "2019-02-16 23:45:00.000 -0200" (horário de verão)
+            # - "2019-02-16 23:45:00.000 -0200 -03:00" ou "-02:00"
             
             # Tentar usar fromisoformat primeiro (preserva timezone automaticamente)
             try:
+                # fromisoformat funciona com formato ISO que tem 'T' e timezone
                 valor_iso = valor.replace(' ', 'T', 1)
                 resultado = datetime.fromisoformat(valor_iso)
             except:
-                # Parse manual preservando timezone
+                # Se falhar, fazer parse manual preservando timezone
+                # Extrair timezone se presente (formato -0300 ou -03:00 ou -0200 ou -02:00)
                 match_tz = re.search(r'\s*([+-])(\d{2}):?(\d{2})$', valor)
                 if match_tz:
-                    sinal = match_tz.group(1)
+                    sinal = match_tz.group(1)  # '+' ou '-'
                     horas_tz = int(match_tz.group(2))
                     minutos_tz = int(match_tz.group(3))
                     
+                    # Calcular offset total em minutos
                     offset_total_minutos = horas_tz * 60 + minutos_tz
                     if sinal == '-':
                         offset_total_minutos = -offset_total_minutos
                     
+                    # Remover timezone da string para fazer parse do datetime
                     valor_sem_tz = re.sub(r'\s*[+-]\d{2}:?\d{2}$', '', valor).strip()
                     
+                    # Parse do datetime (sem timezone)
                     formatos = [
                         '%Y-%m-%d %H:%M:%S.%f',
                         '%Y-%m-%d %H:%M:%S',
@@ -381,11 +375,12 @@ def garantir_datetime_com_timezone(valor):
                             continue
                     
                     if dt_naive:
+                        # Criar timezone com offset preservado (-02:00 ou -03:00)
                         from datetime import timezone
                         tz = timezone(timedelta(minutes=offset_total_minutos))
                         resultado = dt_naive.replace(tzinfo=tz)
                 else:
-                    # Sem timezone, parse normal
+                    # Sem timezone na string, fazer parse normal
                     valor_limpo = valor.strip()
                     formatos = [
                         '%Y-%m-%d %H:%M:%S.%f',
@@ -400,7 +395,7 @@ def garantir_datetime_com_timezone(valor):
                             break
                         except ValueError:
                             continue
-        except Exception:
+        except Exception as e:
             resultado = datetime.now() - timedelta(seconds=300)
     else:
         try:
@@ -419,6 +414,40 @@ def garantir_datetime(valor):
     IMPORTANTE: Preserva timezone -02:00 (horário de verão) ou -03:00 (horário padrão).
     """
     return garantir_datetime_com_timezone(valor)
+
+def formatar_timestamp_nimbus(dt):
+    """Formata timestamp no formato exato da NIMBUS: 2025-12-12 16:35:00.000 -0300
+    
+    Preserva o formato original como vem do banco da NIMBUS.
+    """
+    if not isinstance(dt, datetime):
+        return str(dt)
+    
+    # Formatar data e hora
+    timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Adicionar milissegundos (3 dígitos)
+    if hasattr(dt, 'microsecond') and dt.microsecond:
+        microsec_str = str(dt.microsecond)[:3].zfill(3)
+        timestamp_str += f".{microsec_str}"
+    else:
+        timestamp_str += ".000"
+    
+    # Adicionar timezone no formato -0300 (sem dois pontos)
+    if dt.tzinfo:
+        offset = dt.tzinfo.utcoffset(dt)
+        if offset:
+            total_seconds = offset.total_seconds()
+            hours = int(total_seconds // 3600)
+            minutes = int((abs(total_seconds) % 3600) // 60)
+            # Formato: -0300 (sem dois pontos, como na NIMBUS)
+            offset_str = f"{hours:+03d}{minutes:02d}"
+            timestamp_str += f" {offset_str}"
+    else:
+        # Sem timezone, assumir -03:00 (padrão Brasil)
+        timestamp_str += " -0300"
+    
+    return timestamp_str
 
 def obter_ultima_sincronizacao():
     """Obtém o timestamp da última leitura sincronizada do banco de destino.
@@ -507,13 +536,24 @@ def atualizar_dados_incrementais():
             print(f'   Pulando esta verificação...\n')
             return 0
         
+        # Conectar ao banco destino temporariamente para formatar timestamp
+        conn_destino_temp = psycopg2.connect(**DESTINO)
+        cur_destino_temp = conn_destino_temp.cursor()
+        cur_destino_temp.execute("""
+            SELECT TO_CHAR(%s::timestamptz, 'YYYY-MM-DD HH24:MI:SS.MS') || ' ' || 
+                   TO_CHAR(%s::timestamptz, 'TZH') || TO_CHAR(%s::timestamptz, 'TZM')
+        """, (ultima_sincronizacao, ultima_sincronizacao, ultima_sincronizacao))
+        timestamp_formatado = cur_destino_temp.fetchone()[0]
+        cur_destino_temp.close()
+        conn_destino_temp.close()
+        
         # Conectar ao banco origem
         conn_origem = psycopg2.connect(**ORIGEM)
         cur_origem = conn_origem.cursor()
         
         # Buscar apenas registros novos desde a última sincronização
         query = query_alertadb_incremental(ultima_sincronizacao)
-        print(f'🔍 Verificando novos registros desde {ultima_sincronizacao.strftime("%Y-%m-%d %H:%M:%S")}...')
+        print(f'🔍 Verificando novos registros desde {timestamp_formatado}...')
         
         # Executar query
         cur_origem.execute(query)
@@ -533,7 +573,11 @@ def atualizar_dados_incrementais():
 
         # IMPORTANTE: Preparar timestamps mantendo timezone para inserção correta
         # Formato dos dados: (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
-        # Preserva timezone original (-02:00 para horário de verão ou -03:00 para horário padrão)
+        # Quando o banco origem retorna timestamps com timezone:
+        # - '2025-11-28 11:40:00.000 -0300' (horário padrão)
+        # - '2019-02-16 23:45:00.000 -0200' (horário de verão)
+        # Precisamos preservar o timezone original para que o PostgreSQL converta corretamente
+        # A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL, então preserva o timezone original
         dados_ajustados = []
         for registro in dados:
             dia_original = registro[0]
@@ -543,14 +587,17 @@ def atualizar_dados_incrementais():
                 dia_ajustado = dia_original
             elif isinstance(dia_original, datetime):
                 # Se é datetime sem timezone, converter para string e tentar parse novamente
+                # para detectar se há timezone na representação original
                 dia_ajustado = garantir_datetime_com_timezone(str(dia_original))
+                # Se ainda não tem timezone após conversão, assumir -03:00 (padrão Brasília)
                 if dia_ajustado.tzinfo is None:
                     from datetime import timezone
                     tz_brasilia = timezone(timedelta(hours=-3))
                     dia_ajustado = dia_original.replace(tzinfo=tz_brasilia)
             else:
-                # Converter mantendo timezone original (-02:00 ou -03:00)
+                # Se é string ou outro tipo, converter mantendo timezone original (-02:00 ou -03:00)
                 dia_ajustado = garantir_datetime_com_timezone(dia_original)
+                # Se não tem timezone após conversão, adicionar -03:00 (padrão Brasília)
                 if dia_ajustado.tzinfo is None:
                     from datetime import timezone
                     tz_brasilia = timezone(timedelta(hours=-3))
@@ -564,6 +611,11 @@ def atualizar_dados_incrementais():
         # com os valores corretos do banco origem, mesmo se já existirem dados incorretos
         # A query já garante apenas um registro por (dia, estacao_id) usando DISTINCT ON
         # com ORDER BY id DESC (mais recente)
+        # IMPORTANTE: O psycopg2 vai converter automaticamente timestamps com timezone
+        # para o timezone do servidor antes de armazenar. Para evitar diferença de horas,
+        # precisamos garantir que o timestamp seja inserido com o timezone correto (-03:00)
+        # e o PostgreSQL vai converter para o timezone do servidor mantendo o valor local.
+        # A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL, então preserva o timezone original
         insert_sql = '''
         INSERT INTO pluviometricos
         (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
@@ -586,19 +638,18 @@ def atualizar_dados_incrementais():
         
         total_inseridos = len(dados)
         
-        # Obter o último timestamp sincronizado para exibir
-        cur_destino.execute("SELECT MAX(dia) FROM pluviometricos;")
+        # Obter o último timestamp sincronizado para exibir (já formatado como string no formato NIMBUS)
+        # Formato: 2025-12-12 16:35:00.000 -0300 (sem dois pontos no timezone)
+        cur_destino.execute("""
+            SELECT TO_CHAR(MAX(dia), 'YYYY-MM-DD HH24:MI:SS.MS') || ' ' || 
+                   TO_CHAR(MAX(dia), 'TZH') || TO_CHAR(MAX(dia), 'TZM')
+            FROM pluviometricos;
+        """)
         ultimo_timestamp = cur_destino.fetchone()
         ultimo_ts_str = ""
         if ultimo_timestamp and ultimo_timestamp[0]:
-            ultimo_ts = garantir_datetime_com_timezone(ultimo_timestamp[0])
-            # Converter para string para exibição
-            if ultimo_ts.tzinfo:
-                offset = ultimo_ts.tzinfo.utcoffset(ultimo_ts)
-                horas_offset = int(offset.total_seconds() / 3600)
-                ultimo_ts_str = f". Último: {ultimo_ts.strftime('%Y-%m-%d %H:%M:%S')} {horas_offset:+03d}:00"
-            else:
-                ultimo_ts_str = f". Último: {ultimo_ts.strftime('%Y-%m-%d %H:%M:%S')}"
+            # Já vem formatado do PostgreSQL no formato da NIMBUS: 2025-12-12 16:35:00.000 -0300
+            ultimo_ts_str = f". Último: {ultimo_timestamp[0]}"
         
         print(f'   ✅ {total_inseridos:,} novo(s) registro(s) sincronizado(s){ultimo_ts_str} [{timestamp_atual}]')
         

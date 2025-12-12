@@ -10,7 +10,7 @@ import psycopg2
 from dotenv import load_dotenv
 import os
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Carregar variáveis de ambiente
 project_root = Path(__file__).parent.parent.parent
@@ -43,14 +43,48 @@ def carregar_configuracoes():
 
 ORIGEM, DESTINO = carregar_configuracoes()
 
+def formatar_timestamp_nimbus(dt):
+    """Formata timestamp no formato exato da NIMBUS: 2025-12-12 16:35:00.000 -0300
+    
+    Preserva o formato original como vem do banco da NIMBUS.
+    """
+    if not isinstance(dt, datetime):
+        return str(dt)
+    
+    # Formatar data e hora
+    timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Adicionar milissegundos (3 dígitos)
+    if hasattr(dt, 'microsecond') and dt.microsecond:
+        microsec_str = str(dt.microsecond)[:3].zfill(3)
+        timestamp_str += f".{microsec_str}"
+    else:
+        timestamp_str += ".000"
+    
+    # Adicionar timezone no formato -0300 (sem dois pontos)
+    if dt.tzinfo:
+        offset = dt.tzinfo.utcoffset(dt)
+        if offset:
+            total_seconds = offset.total_seconds()
+            hours = int(total_seconds // 3600)
+            minutes = int((abs(total_seconds) % 3600) // 60)
+            # Formato: -0300 (sem dois pontos, como na NIMBUS)
+            offset_str = f"{hours:+03d}{minutes:02d}"
+            timestamp_str += f" {offset_str}"
+    else:
+        # Sem timezone, assumir -03:00 (padrão Brasil)
+        timestamp_str += " -0300"
+    
+    return timestamp_str
+
 def query_dados_origem(data_inicial=None, data_final=None, estacao_id=None):
     """Query para buscar dados do banco origem usando DISTINCT ON."""
     where_clauses = []
     
     if data_inicial:
-        where_clauses.append(f"el.\"horaLeitura\" >= '{data_inicial}'::timestamp")
+        where_clauses.append(f"el.\"horaLeitura\" >= '{data_inicial}'::timestamptz")
     if data_final:
-        where_clauses.append(f"el.\"horaLeitura\" <= '{data_final}'::timestamp")
+        where_clauses.append(f"el.\"horaLeitura\" <= '{data_final}'::timestamptz")
     if estacao_id:
         where_clauses.append(f"el.estacao_id = {estacao_id}")
     
@@ -92,15 +126,15 @@ def normalizar_valor(val):
         return val
 
 def normalizar_timestamp(ts):
-    """Normaliza timestamp removendo timezone para comparação.
+    """Normaliza timestamp preservando timezone para comparação.
     
-    Usa a mesma lógica do script de carregamento - remove timezone mantendo valor local.
+    A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL, então preservamos o timezone.
     """
     if ts is None:
         return None
     if isinstance(ts, datetime):
-        # Remover timezone mantendo valor local (não converter para UTC)
-        return ts.replace(tzinfo=None) if ts.tzinfo else ts
+        # Preservar timezone se presente (TIMESTAMPTZ)
+        return ts
     return ts
 
 def valores_iguais(orig, dest):
@@ -182,20 +216,22 @@ def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=10
         for registro_origem in dados_origem:
             dia_orig, m05_origem, m10_origem, m15_origem, h01_origem, h04_origem, h24_origem, h96_origem, estacao, est_id = registro_origem
             
-            # Normalizar timestamp para busca (remover timezone se presente)
+            # Normalizar timestamp preservando timezone (TIMESTAMPTZ)
             dia_normalizado = normalizar_timestamp(dia_orig)
             
             # Buscar registro correspondente no destino
-            # Usar comparação com margem de tempo para evitar problemas de timezone
+            # A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL
+            # Usar comparação com margem de tempo para evitar problemas de precisão
             query_destino = """
             SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
             FROM pluviometricos
-            WHERE dia >= %s::timestamp - INTERVAL '1 second'
-              AND dia <= %s::timestamp + INTERVAL '1 second'
+            WHERE dia >= %s::timestamptz - INTERVAL '1 second'
+              AND dia <= %s::timestamptz + INTERVAL '1 second'
               AND estacao_id = %s
             LIMIT 1;
             """
             
+            # Passar timestamp com timezone preservado
             cur_destino.execute(query_destino, (dia_normalizado, dia_normalizado, est_id))
             registro_destino = cur_destino.fetchone()
             
@@ -242,7 +278,8 @@ def validar_dados(data_inicial=None, data_final=None, estacao_id=None, limite=10
             print("-" * 80)
             
             for i, div in enumerate(divergencias[:20], 1):  # Mostrar até 20 primeiras
-                print(f"\n{i}. {div['tipo']} - {div['dia']} (Estacao ID: {div['estacao_id']})")
+                dia_formatado = formatar_timestamp_nimbus(div['dia']) if isinstance(div['dia'], datetime) else str(div['dia'])
+                print(f"\n{i}. {div['tipo']} - {dia_formatado} (Estacao ID: {div['estacao_id']})")
                 
                 if div['tipo'] == 'REGISTRO_AUSENTE':
                     reg_origem = div['origem']

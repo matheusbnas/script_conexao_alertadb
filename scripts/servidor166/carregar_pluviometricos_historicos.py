@@ -149,6 +149,40 @@ def preparar_timestamp_para_insercao(dt):
         timestamp_str += f".{dt.microsecond:06d}"[:7]
     return timestamp_str
 
+def formatar_timestamp_nimbus(dt):
+    """Formata timestamp no formato exato da NIMBUS: 2025-12-12 16:35:00.000 -0300
+    
+    Preserva o formato original como vem do banco da NIMBUS.
+    """
+    if not isinstance(dt, datetime):
+        return str(dt)
+    
+    # Formatar data e hora
+    timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Adicionar milissegundos (3 dígitos)
+    if hasattr(dt, 'microsecond') and dt.microsecond:
+        microsec_str = str(dt.microsecond)[:3].zfill(3)
+        timestamp_str += f".{microsec_str}"
+    else:
+        timestamp_str += ".000"
+    
+    # Adicionar timezone no formato -0300 (sem dois pontos)
+    if dt.tzinfo:
+        offset = dt.tzinfo.utcoffset(dt)
+        if offset:
+            total_seconds = offset.total_seconds()
+            hours = int(total_seconds // 3600)
+            minutes = int((abs(total_seconds) % 3600) // 60)
+            # Formato: -0300 (sem dois pontos, como na NIMBUS)
+            offset_str = f"{hours:+03d}{minutes:02d}"
+            timestamp_str += f" {offset_str}"
+    else:
+        # Sem timezone, assumir -03:00 (padrão Brasil)
+        timestamp_str += " -0300"
+    
+    return timestamp_str
+
 def garantir_datetime_com_timezone(valor):
     """
     Garante que o valor seja um objeto datetime mantendo o timezone original.
@@ -383,7 +417,7 @@ def criar_tabela_pluviometricos():
         
         create_table_sql = '''
         CREATE TABLE IF NOT EXISTS pluviometricos (
-            dia TIMESTAMP NOT NULL,
+            dia TIMESTAMPTZ NOT NULL,
             m05 NUMERIC,
             m10 NUMERIC,
             m15 NUMERIC,
@@ -844,7 +878,7 @@ def carregar_dados_completos(usar_data_inicial=None):
                 dia_original = dados[0][0]
                 print(f'   🔍 Exemplo de timestamp processado:')
                 print(f'      Original: {dia_original} (tipo: {type(dia_original)})')
-                print(f'      Processado: {primeiro_registro[0]} (tipo: {type(primeiro_registro[0])})')
+                print(f'      Processado: {formatar_timestamp_nimbus(primeiro_registro[0])} (tipo: {type(primeiro_registro[0])})')
                 if hasattr(primeiro_registro[0], 'tzinfo') and primeiro_registro[0].tzinfo:
                     offset = primeiro_registro[0].tzinfo.utcoffset(primeiro_registro[0])
                     print(f'      Timezone offset: {offset}')

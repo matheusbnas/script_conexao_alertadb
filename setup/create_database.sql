@@ -32,7 +32,7 @@ END $$;
 
 -- 3️⃣ CRIAR TABELA DESTINO (se não existir)
 CREATE TABLE IF NOT EXISTS pluviometricos (
-    dia TIMESTAMP NOT NULL,
+    dia TIMESTAMPTZ NOT NULL,
     m05 NUMERIC(10,2),
     m10 NUMERIC(10,2),
     m15 NUMERIC(10,2),
@@ -124,7 +124,7 @@ BEGIN
         ORDER BY el."horaLeitura" ASC
         $query$
     ) AS origem(
-        dia TIMESTAMP,
+        dia TIMESTAMPTZ,
         m05 NUMERIC(10,2),
         m10 NUMERIC(10,2),
         m15 NUMERIC(10,2),

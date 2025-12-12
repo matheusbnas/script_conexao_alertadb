@@ -185,12 +185,15 @@ def query_todos_dados_pluviometricos():
     IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
     e depois ordenar por id DESC para pegar o registro mais recente.
     
+    A coluna horaLeitura é TIMESTAMPTZ NOT NULL no NIMBUS, preservando o timezone original.
+    O pandas/SQLAlchemy preserva automaticamente o timezone ao ler TIMESTAMPTZ.
+    
     Esta é a MESMA query usada em carregar_pluviometricos_historicos.py e
     sincronizar_pluviometricos_novos.py para garantir consistência.
     """
     return """
 SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    el."horaLeitura" AS "Dia",
+    el."horaLeitura" AS "Dia",  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
     elc.m05,
     elc.m10,
     elc.m15,
@@ -232,7 +235,8 @@ def query_todos_dados_meteorologicos():
 def obter_schema_pluviometricos():
     """Retorna schema do BigQuery para tabela pluviometricos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição (no formato Y-m-d H:M:S)"),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do NIMBUS (preserva timezone original). Armazenado em UTC no BigQuery."),
+        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
@@ -440,23 +444,40 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             if col in chunk_df.columns:
                 chunk_df = chunk_df.drop(columns=[col])
         
-        # Processar coluna dia como TIMESTAMP
+        # Processar coluna dia: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
         def processar_dia_timestamp(dt):
-            """Processa datetime para TIMESTAMP do BigQuery (UTC)"""
+            """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC).
+            
+            A coluna horaLeitura no banco NIMBUS é TIMESTAMPTZ NOT NULL (preserva timezone original).
+            O BigQuery armazena TIMESTAMP em UTC internamente, então convertemos preservando o valor correto.
+            
+            IMPORTANTE: Preserva o timezone original do TIMESTAMPTZ antes de converter para UTC.
+            """
             if pd.isna(dt):
                 return None
             try:
+                # Converter para pandas Timestamp se necessário
                 if isinstance(dt, str):
+                    # Tentar parsear preservando timezone se presente na string
                     dt_parsed = pd.to_datetime(dt)
                 elif isinstance(dt, pd.Timestamp):
                     dt_parsed = dt
+                elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                    # Se já é datetime com timezone (TIMESTAMPTZ do PostgreSQL)
+                    dt_parsed = pd.Timestamp(dt)
                 else:
                     dt_parsed = pd.to_datetime(dt)
                 
+                # Se já tem timezone (TIMESTAMPTZ do PostgreSQL), converter para UTC preservando o valor
                 if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+                    # Converter para UTC mantendo o valor absoluto correto
                     dt_utc = dt_parsed.tz_convert('UTC')
+                    # Remover timezone info para BigQuery (ele armazena como UTC internamente)
                     return dt_utc.tz_localize(None)
                 elif isinstance(dt_parsed, pd.Timestamp):
+                    # Se não tem timezone, pode ser que o PostgreSQL retornou sem timezone
+                    # Neste caso, assumir que já está no timezone do servidor (Brasil -03:00)
+                    # e converter para UTC
                     from datetime import timezone, timedelta
                     tz_brasil = timezone(timedelta(hours=-3))
                     dt_com_tz = dt_parsed.tz_localize(tz_brasil)
@@ -464,9 +485,57 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
                     return dt_utc.tz_localize(None)
                 else:
                     return dt_parsed
+            except Exception as e:
+                print(f"      ⚠️  Erro ao processar timestamp: {e}")
+                return None
+        
+        def formatar_dia_original(dt):
+            """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300
+            
+            Preserva o formato STRING original como vem do banco da NIMBUS/servidor166.
+            """
+            if pd.isna(dt):
+                return None
+            try:
+                # Se já é string no formato correto, retornar como está
+                if isinstance(dt, str):
+                    # Verificar se já está no formato correto (tem timezone no final)
+                    if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                        return dt
+                    # Tentar converter
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                # Extrair timezone offset
+                offset_str = "-0300"  # Padrão Brasil
+                if isinstance(dt_parsed, pd.Timestamp):
+                    if dt_parsed.tz is not None:
+                        offset = dt_parsed.tz.utcoffset(dt_parsed)
+                        if offset:
+                            total_seconds = offset.total_seconds()
+                            hours = int(total_seconds // 3600)
+                            minutes = int((abs(total_seconds) % 3600) // 60)
+                            # Formato: -0300 (sem dois pontos, como na NIMBUS)
+                            offset_str = f"{hours:+03d}{minutes:02d}"
+                
+                # Formatar: 2009-02-16 02:12:20.000 -0300
+                timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
+                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
+                    # Pegar apenas os 3 primeiros dígitos dos microsegundos
+                    microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
+                    timestamp_str += f".{microsec_str}"
+                else:
+                    timestamp_str += ".000"
+                
+                return f"{timestamp_str} {offset_str}"
             except Exception:
                 return None
         
+        # Processar ambas as colunas: dia (TIMESTAMP) e dia_original (STRING)
+        chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
         chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
         
         if 'estacao_id' in chunk_df.columns:
