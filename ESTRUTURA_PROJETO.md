@@ -18,9 +18,20 @@ projeto/
 │   │   ├── app.py
 │   │   └── dashboard.html
 │   │
-│   └── cloudsql/                          # Scripts para Cloud SQL GCP
-│       ├── carregar_para_cloudsql_inicial.py
-│       └── sincronizar_para_cloudsql.py
+│   ├── cloudsql/                          # Scripts para Cloud SQL GCP
+│   │   ├── carregar_para_cloudsql_inicial.py
+│   │   └── sincronizar_para_cloudsql.py
+│   │
+│   └── bigquery/                          # Scripts para Google BigQuery
+│       ├── exportar_pluviometricos_nimbus_bigquery.py
+│       ├── exportar_pluviometricos_servidor166_bigquery.py
+│       ├── exportar_meteorologicos_nimbus_bigquery.py
+│       ├── sincronizar_pluviometricos_nimbus_bigquery.py
+│       ├── sincronizar_pluviometricos_servidor166_bigquery.py
+│       ├── comparar_bigquery_nimbus.py
+│       ├── verificar_duplicatas_periodo.py
+│       ├── diagnosticar_inconsistencias.py
+│       └── README.md
 │
 ├── 📂 setup/                              # Scripts de configuração/setup
 │   ├── criar_usuario_postgresql.sql       # Cria usuário no PostgreSQL
@@ -29,8 +40,8 @@ projeto/
 │   └── testar_conexao.py                  # Testa conexão com servidor
 │
 ├── 📂 automacao/                          # Scripts de automação
-│   ├── cron.sh                            # Script unificado de cron (normal|cloudsql)
-│   └── configurar_cron.sh                 # Script unificado de configuração (normal|cloudsql)
+│   ├── cron.sh                            # Script unificado de cron (normal|cloudsql|bigquery|bigquery_servidor166)
+│   └── configurar_cron.sh                 # Script unificado de configuração (normal|cloudsql|bigquery|bigquery_servidor166)
 │
 ├── 📂 docs/                               # Documentação
 │   ├── OPCOES_AUTOMACAO.md                 # Opções de automação
@@ -75,6 +86,16 @@ Scripts principais que fazem a sincronização e manipulação de dados:
 - **carregar_para_cloudsql_inicial.py** - Carga inicial para Cloud SQL GCP
 - **sincronizar_para_cloudsql.py** - Sincronização incremental para Cloud SQL GCP
 
+**bigquery/** - Scripts para Google BigQuery:
+- **exportar_pluviometricos_nimbus_bigquery.py** - Carga inicial de dados pluviométricos do NIMBUS
+- **exportar_pluviometricos_servidor166_bigquery.py** - Carga inicial de dados pluviométricos do servidor 166
+- **exportar_meteorologicos_nimbus_bigquery.py** - Carga inicial de dados meteorológicos do NIMBUS
+- **sincronizar_pluviometricos_nimbus_bigquery.py** - Sincronização incremental pluviométricos (NIMBUS)
+- **sincronizar_pluviometricos_servidor166_bigquery.py** - Sincronização incremental pluviométricos (servidor 166)
+- **comparar_bigquery_nimbus.py** - Compara dados entre BigQuery e NIMBUS
+- **verificar_duplicatas_periodo.py** - Verifica duplicatas em período específico
+- **diagnosticar_inconsistencias.py** - Diagnostica inconsistências nos dados
+
 ### `setup/`
 Scripts de configuração inicial do sistema:
 - **criar_usuario_postgresql.sql** - Cria usuário no PostgreSQL
@@ -84,8 +105,8 @@ Scripts de configuração inicial do sistema:
 
 ### `automacao/`
 Scripts para automatizar a execução:
-- **cron.sh** - Script unificado que aceita parâmetro `normal` ou `cloudsql`
-- **configurar_cron.sh** - Script unificado de configuração que aceita parâmetro `normal` ou `cloudsql`
+- **cron.sh** - Script unificado que aceita parâmetro `normal`, `cloudsql`, `bigquery` ou `bigquery_servidor166`
+- **configurar_cron.sh** - Script unificado de configuração que aceita parâmetro `normal`, `cloudsql`, `bigquery` ou `bigquery_servidor166`
 - **prefect_flow.py** - Para usar com Prefect
 - **configurar_cron_linux.sh** - Helper para configurar cron Linux
 - **configurar_cron_cloudsql.sh** - Helper para configurar cron Cloud SQL

@@ -142,7 +142,7 @@ Isso indica que há **múltiplos registros** no NIMBUS com esse timestamp, e:
 2. **Na formatação:** A função `formatar_dia_nimbus` pode estar causando problemas
 3. **Na comparação:** Certifique-se de usar a mesma query com `DISTINCT ON` em ambos os lados
 
-**Recomendação:** Execute novamente o script `exportar_nimbus_para_bigquery.py` para garantir que todos os dados foram exportados corretamente.
+**Recomendação:** Execute novamente o script `exportar_pluviometricos_nimbus_bigquery.py` para garantir que todos os dados foram exportados corretamente.
 
 ## 🔧 Verificação
 

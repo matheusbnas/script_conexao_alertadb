@@ -2,7 +2,7 @@
 
 ## 📋 Mudanças Realizadas
 
-O script `exportar_nimbus_para_bigquery.py` foi ajustado para usar **exatamente a mesma lógica** do script `carregar_pluviometricos_historicos.py` do servidor166.
+O script `exportar_pluviometricos_nimbus_bigquery.py` foi ajustado para usar **exatamente a mesma lógica** do script `carregar_pluviometricos_historicos.py` do servidor166.
 
 ### ✅ Mudanças Principais
 
@@ -74,7 +74,7 @@ PARTITION BY DATE(dia)  -- Particionamento por dia
 
 2. **Executar o script:**
    ```bash
-   python scripts/bigquery/exportar_nimbus_para_bigquery.py
+   python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
    ```
 
 3. **Verificar dados:**

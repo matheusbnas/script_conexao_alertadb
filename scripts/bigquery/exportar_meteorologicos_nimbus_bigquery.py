@@ -2,31 +2,29 @@
 # -*- coding: utf-8 -*-
 
 """
-🌧️ EXPORTAÇÃO DIRETA - NIMBUS → BigQuery
+🌤️ EXPORTAÇÃO DIRETA - DADOS METEOROLÓGICOS NIMBUS → BigQuery
 
 ═══════════════════════════════════════════════════════════════════════════
 🎯 PROPÓSITO DESTE SCRIPT:
 ═══════════════════════════════════════════════════════════════════════════
 
-Este script exporta dados diretamente do banco NIMBUS (alertadb) para o 
-BigQuery, usando a MESMA lógica de coleta dos scripts servidor166.
+Este script exporta dados METEOROLÓGICOS diretamente do banco NIMBUS (alertadb) 
+para o BigQuery, usando DISTINCT ON (mesma lógica dos dados pluviométricos).
 
 ARQUITETURA:
     NIMBUS (alertadb) → Parquet → BigQuery
               ↑ [ESTE SCRIPT - DIRETO]
 
 QUERY UTILIZADA:
-    ✅ DISTINCT ON (el."horaLeitura", el.estacao_id)
-    ✅ ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC
-    ✅ MESMA query de carregar_pluviometricos_historicos.py
-    ✅ Garante apenas um registro por (dia, estacao_id) - o mais recente
-    ✅ Estrutura de dados IDÊNTICA ao servidor166 (TIMESTAMP para dia)
+    ✅ DISTINCT ON (l."horaLeitura", l.estacao_id)
+    ✅ ORDER BY l."horaLeitura" ASC, l.estacao_id ASC, l.id DESC
+    ✅ Garante apenas um registro por (data_hora, estacao_id) - o mais recente
+    ✅ Usa subquery com ROW_NUMBER para pivotar dados de sensores
 
 VANTAGENS:
     ✅ Mais rápido (menos camadas)
     ✅ Dados sempre da fonte original (NIMBUS)
     ✅ BigQuery otimizado para análises
-    ✅ Ideal para stakeholders
     ✅ Formato Parquet (5-10x mais rápido que CSV)
     ✅ Exportação completa (todos os dados desde 1997)
 
@@ -35,12 +33,12 @@ VANTAGENS:
 ═══════════════════════════════════════════════════════════════════════════
 
 ✅ Conecta diretamente ao banco NIMBUS (alertadb)
-✅ Busca TODOS os dados usando DISTINCT ON (MESMA query do servidor166)
-✅ Exporta para formato Parquet completo (não dividido por ano)
+✅ Busca TODOS os dados meteorológicos usando DISTINCT ON
+✅ Exporta para formato Parquet completo
 ✅ Carrega no BigQuery automaticamente
-✅ Cria/atualiza tabela no BigQuery com estrutura IDÊNTICA ao servidor166
+✅ Cria/atualiza tabela no BigQuery
 ✅ Processa em lotes de 10.000 registros para otimizar memória
-✅ Usa TIMESTAMP para coluna dia (igual ao servidor166)
+✅ Usa TIMESTAMP para coluna dia (igual aos pluviométricos)
 ✅ Converte timezone para UTC (padrão BigQuery)
 ✅ Particionamento por coluna dia (melhora performance)
 
@@ -53,10 +51,9 @@ Variáveis obrigatórias no .env:
 - BIGQUERY_PROJECT_ID
 
 Variáveis opcionais:
-- BIGQUERY_DATASET_ID_NIMBUS (padrão: alertadb_cor_raw) - Dataset para dados NIMBUS → BigQuery
-- BIGQUERY_TABLE_ID (padrão: pluviometricos)
+- BIGQUERY_DATASET_ID_NIMBUS (padrão: alertadb_cor_raw)
+- BIGQUERY_TABLE_ID_METEOROLOGICOS (padrão: meteorologicos)
 - BIGQUERY_CREDENTIALS_PATH (opcional: caminho para credentials.json)
-- BIGQUERY_CONNECTION_ID (opcional: ID da conexão BigQuery existente)
 
 📚 GUIA COMPLETO: Veja docs/BIGQUERY_CONFIGURAR_VARIAVEIS.md para saber
    onde encontrar cada configuração no console GCP/BigQuery.
@@ -101,18 +98,14 @@ def carregar_configuracoes():
         }
 
         # BigQuery
-        # Verificar se existe credentials.json na pasta credentials (padrão)
-        # project_root já está definido no escopo do módulo
         credentials_padrao = project_root / 'credentials' / 'credentials.json'
         
-        # Se não foi especificado no .env, usar o padrão se existir
         credentials_path_env = obter_variavel('BIGQUERY_CREDENTIALS_PATH', obrigatoria=False)
         if credentials_path_env:
             credentials_path = Path(credentials_path_env)
             if not credentials_path.exists():
                 print(f"   ⚠️  Caminho no .env não encontrado: {credentials_path}")
                 print(f"   💡 Tentando usar caminho padrão: {credentials_padrao}")
-                # Tentar o padrão mesmo se o .env especificou um caminho inválido
                 if credentials_padrao.exists():
                     credentials_path = credentials_padrao
                 else:
@@ -125,9 +118,8 @@ def carregar_configuracoes():
         bigquery_config = {
             'project_id': obter_variavel('BIGQUERY_PROJECT_ID'),
             'dataset_id': obter_variavel('BIGQUERY_DATASET_ID_NIMBUS', obrigatoria=False, padrao='alertadb_cor_raw'),
-            'table_id': obter_variavel('BIGQUERY_TABLE_ID', obrigatoria=False, padrao='pluviometricos'),
+            'table_id': obter_variavel('BIGQUERY_TABLE_ID_METEOROLOGICOS', obrigatoria=False, padrao='meteorologicos'),
             'credentials_path': str(credentials_path) if credentials_path else None,
-            'connection_id': obter_variavel('BIGQUERY_CONNECTION_ID', obrigatoria=False)  # Opcional: conexão existente
         }
         
         return origem, bigquery_config
@@ -147,9 +139,8 @@ def carregar_configuracoes():
         print("   # BigQuery (destino)")
         print("   BIGQUERY_PROJECT_ID=seu-projeto-gcp")
         print("   BIGQUERY_DATASET_ID_NIMBUS=alertadb_cor_raw (opcional)")
-        print("   BIGQUERY_TABLE_ID=pluviometricos (opcional)")
+        print("   BIGQUERY_TABLE_ID_METEOROLOGICOS=meteorologicos (opcional)")
         print("   BIGQUERY_CREDENTIALS_PATH=/caminho/credentials.json (opcional)")
-        print("   BIGQUERY_CONNECTION_ID=projects/.../connections/... (opcional)")
         print("=" * 70)
         raise
 
@@ -175,91 +166,75 @@ def testar_conexao_nimbus():
         print(f"      Erro: {e}")
         return False
 
-def query_todos_dados_pluviometricos():
-    """Retorna query para buscar TODOS os dados pluviométricos disponíveis no banco NIMBUS.
-    
-    Usa DISTINCT ON para garantir apenas um registro por (dia, estacao_id),
-    mantendo o registro com o maior ID (mais recente), que é exatamente como
-    está no banco alertadb.
-    
-    IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
-    e depois ordenar por id DESC para pegar o registro mais recente.
-    
-    A coluna horaLeitura é TIMESTAMPTZ NOT NULL no NIMBUS, preservando o timezone original.
-    O pandas/SQLAlchemy preserva automaticamente o timezone ao ler TIMESTAMPTZ.
-    
-    Esta é a MESMA query usada em carregar_pluviometricos_historicos.py e
-    sincronizar_pluviometricos_novos.py para garantir consistência.
-    """
-    return """
-SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    el."horaLeitura" AS "Dia",  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
-    elc.m05,
-    elc.m10,
-    elc.m15,
-    elc.h01,
-    elc.h04,
-    elc.h24,
-    elc.h96,
-    ee.nome AS "Estacao",
-    el.estacao_id
-FROM public.estacoes_leitura AS el
-JOIN public.estacoes_leiturachuva AS elc
-    ON elc.leitura_id = el.id
-JOIN public.estacoes_estacao AS ee
-    ON ee.id = el.estacao_id
-ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
-"""
-
 def query_todos_dados_meteorologicos():
     """Retorna query para buscar TODOS os dados meteorológicos disponíveis no banco NIMBUS.
     
-    TODO: Implementar query quando estrutura estiver definida.
-    Por enquanto retorna query vazia.
+    Usa DISTINCT ON para garantir apenas um registro por (horaLeitura, estacao_id),
+    mantendo o registro com o maior ID (mais recente), seguindo a mesma lógica
+    dos dados pluviométricos.
+    
+    A query usa uma CTE para pivotar os dados dos sensores
+    (Chuva, Direção Vento, Velocidade Vento, Temperatura, Pressão, Umidade)
+    em colunas, agrupando por leitura_id. Depois usa DISTINCT ON para garantir
+    apenas uma leitura por (horaLeitura, estacao_id), pegando a mais recente.
+    
+    IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
+    e depois ordenar por leitura_id DESC para pegar o registro mais recente.
+    
+    A coluna horaLeitura é TIMESTAMPTZ NOT NULL no NIMBUS, preservando o timezone original.
+    Esta é a MESMA lógica usada em query_todos_dados_pluviometricos() para garantir consistência.
     """
-    # TODO: Implementar query quando estrutura estiver definida
-    return None
-    # Exemplo de estrutura esperada (ajustar quando query estiver pronta):
-    # return """
-    # SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    #     el."horaLeitura" AS "Dia",
-    #     -- Adicionar campos meteorológicos aqui
-    #     ee.nome AS "Estacao",
-    #     el.estacao_id
-    # FROM public.estacoes_leitura AS el
-    # JOIN public.estacoes_estacao AS ee
-    #     ON ee.id = el.estacao_id
-    # ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
-    # """
+    return """
+WITH sensores_pivotados AS (
+    SELECT
+        l."horaLeitura" AS data_hora,
+        l.estacao_id,
+        e.nome AS nome_estacao,
+        l.id AS leitura_id,
+        MAX(CASE WHEN s.nome = 'Chuva'                 THEN ls.valor END) AS chuva,
+        MAX(CASE WHEN s.nome = 'Direção Vento'         THEN ls.valor END) AS dirVento,
+        MAX(CASE WHEN s.nome = 'Velocidade Vento'      THEN ls.valor END) AS velVento,
+        MAX(CASE WHEN s.nome = 'Temperatura do Ar'     THEN ls.valor END) AS temperatura,
+        MAX(CASE WHEN s.nome = 'Pressão Atmosférica'   THEN ls.valor END) AS pressao,
+        MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade
+    FROM public.estacoes_leiturasensor ls
+    JOIN public.estacoes_leitura l
+          ON ls.leitura_id = l.id
+    JOIN public.estacoes_sensor s
+          ON ls.sensor_id = s.id
+    JOIN public.estacoes_estacao e
+          ON e.id = l.estacao_id
+    WHERE l."horaLeitura" >= '1997-01-01'
+    GROUP BY l."horaLeitura", l.estacao_id, e.nome, l.id
+)
+SELECT DISTINCT ON (data_hora, estacao_id)
+    data_hora AS "Dia",  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
+    estacao_id,
+    nome_estacao AS "Estacao",
+    chuva,
+    dirVento,
+    velVento,
+    temperatura,
+    pressao,
+    umidade
+FROM sensores_pivotados
+ORDER BY data_hora ASC, estacao_id ASC, leitura_id DESC;
+"""
 
-def obter_schema_pluviometricos():
-    """Retorna schema do BigQuery para tabela pluviometricos."""
+def obter_schema_meteorologicos():
+    """Retorna schema do BigQuery para tabela meteorologicos."""
     return [
         bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do NIMBUS (preserva timezone original). Armazenado em UTC no BigQuery."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
-        bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h01", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h04", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h24", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h96", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
-    ]
-
-def obter_schema_meteorologicos():
-    """Retorna schema do BigQuery para tabela meteorologicos.
-    
-    TODO: Ajustar schema quando estrutura estiver definida.
-    Por enquanto retorna schema básico com campos comuns.
-    """
-    # TODO: Ajustar schema quando estrutura estiver definida
-    return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição (no formato Y-m-d H:M:S)"),
-        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
-        # Adicionar campos meteorológicos aqui quando estrutura estiver definida
+        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
+        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE", description="Nome da estação meteorológica"),
+        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED", description="ID da estação meteorológica"),
+        bigquery.SchemaField("chuva", "FLOAT64", mode="NULLABLE", description="Chuva (mm)"),
+        bigquery.SchemaField("dirVento", "FLOAT64", mode="NULLABLE", description="Direção do vento (graus)"),
+        bigquery.SchemaField("velVento", "FLOAT64", mode="NULLABLE", description="Velocidade do vento (m/s ou km/h)"),
+        bigquery.SchemaField("temperatura", "FLOAT64", mode="NULLABLE", description="Temperatura do ar (°C)"),
+        bigquery.SchemaField("pressao", "FLOAT64", mode="NULLABLE", description="Pressão atmosférica (hPa)"),
+        bigquery.SchemaField("umidade", "FLOAT64", mode="NULLABLE", description="Umidade do ar (%)"),
     ]
 
 def criar_dataset_se_nao_existir(client, dataset_id):
@@ -267,8 +242,8 @@ def criar_dataset_se_nao_existir(client, dataset_id):
     try:
         dataset_ref = client.dataset(dataset_id)
         dataset = bigquery.Dataset(dataset_ref)
-        dataset.location = "US"  # ou "us-west1" se preferir
-        dataset.description = "Dados pluviométricos do NIMBUS"
+        dataset.location = "US"
+        dataset.description = "Dados meteorológicos do NIMBUS"
         
         dataset = client.create_dataset(dataset, exists_ok=True)
         print(f"✅ Dataset '{dataset_id}' criado/verificado no BigQuery!")
@@ -288,107 +263,105 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
             # Se existe, verificar se tem schema válido
             if not table.schema or len(table.schema) == 0:
                 print(f"   ⚠️  Tabela existe mas sem schema.")
-                # Se tem dados, deletar e recriar (dados serão recarregados com WRITE_TRUNCATE)
                 if table.num_rows > 0:
                     print(f"   📋 Tabela tem {table.num_rows:,} registros. Recriando com schema e particionamento...")
                     client.delete_table(table_ref)
-                    # Criar nova tabela com schema e particionamento
                     table = bigquery.Table(table_ref, schema=schema)
-                    table.description = "Dados pluviométricos do NIMBUS (desde 1997)"
-                    # Como dia é TIMESTAMP, podemos usar particionamento por coluna
+                    table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                     table.time_partitioning = bigquery.TimePartitioning(
-                        type_=bigquery.TimePartitioningType.DAY,
-                        field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+                        type_=bigquery.TimePartitioningType.MONTH,
+                        field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
                     )
                     table = client.create_table(table)
-                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento por MÊS!")
+                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento!")
                 else:
-                    # Tabela vazia, recriar com schema e particionamento
                     print(f"   📋 Tabela vazia sem schema. Recriando com schema e particionamento...")
                     client.delete_table(table_ref)
-                    # Criar nova tabela com schema e particionamento
                     table = bigquery.Table(table_ref, schema=schema)
-                    table.description = "Dados pluviométricos do NIMBUS (desde 1997)"
-                    # Como dia é TIMESTAMP, usar particionamento por coluna
+                    table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                     table.time_partitioning = bigquery.TimePartitioning(
-                        type_=bigquery.TimePartitioningType.DAY,
-                        field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+                        type_=bigquery.TimePartitioningType.MONTH,
+                        field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
                     )
                     table = client.create_table(table)
-                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento por data de ingestão!")
+                    print(f"✅ Tabela '{table_id}' recriada com schema e particionamento!")
                 return True
             else:
                 # Verificar se já tem particionamento
-                # Verificar se o particionamento está correto (por coluna dia)
+                # Verificar se o particionamento está correto (por coluna dia, tipo MONTH)
                 if table.time_partitioning and table.time_partitioning.field:
+                    # Verificar se está usando DAY (precisa mudar para MONTH) ou se já está MONTH
                     if table.time_partitioning.field != "dia":
                         print(f"   ⚠️  Tabela '{table_id}' existe com particionamento por campo '{table.time_partitioning.field}'.")
-                        print(f"   💡 Precisamos recriar a tabela com particionamento por 'dia'.")
+                        print(f"   💡 Precisamos recriar a tabela com particionamento por 'dia' (MÊS).")
                         print(f"   🔄 Deletando tabela para recriar com particionamento correto...")
                         client.delete_table(table_ref)
-                        # Criar nova tabela com particionamento por coluna dia
                         table = bigquery.Table(table_ref, schema=schema)
-                        table.description = "Dados pluviométricos do NIMBUS (desde 1997)"
+                        table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                         table.time_partitioning = bigquery.TimePartitioning(
-                            type_=bigquery.TimePartitioningType.DAY,
-                            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+                            type_=bigquery.TimePartitioningType.MONTH,
+                            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
                         )
                         table = client.create_table(table)
-                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia'!")
+                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia' (MÊS)!")
+                    elif table.time_partitioning.type_ != bigquery.TimePartitioningType.MONTH:
+                        # Tabela tem particionamento por DIA, mas precisa ser MONTH
+                        print(f"   ⚠️  Tabela '{table_id}' existe com particionamento por DIA.")
+                        print(f"   ⚠️  Isso pode exceder o limite de 10.000 partições!")
+                        print(f"   💡 Precisamos recriar a tabela com particionamento por MÊS.")
+                        print(f"   🔄 Deletando tabela para recriar com particionamento por MÊS...")
+                        client.delete_table(table_ref)
+                        table = bigquery.Table(table_ref, schema=schema)
+                        table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
+                        table.time_partitioning = bigquery.TimePartitioning(
+                            type_=bigquery.TimePartitioningType.MONTH,
+                            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+                        )
+                        table = client.create_table(table)
+                        print(f"✅ Tabela '{table_id}' recriada com particionamento por MÊS!")
                     else:
-                        print(f"✅ Tabela '{table_id}' já existe com particionamento por coluna 'dia'!")
+                        print(f"✅ Tabela '{table_id}' já existe com particionamento por coluna 'dia' (MÊS)!")
                 elif not table.time_partitioning:
-                    # BigQuery não permite converter tabela não particionada em particionada
-                    # Se a tabela está vazia, podemos deletar e recriar com particionamento
                     if table.num_rows == 0:
                         print(f"   📋 Tabela existe mas sem particionamento e está vazia.")
-                        print(f"   🔄 Recriando tabela com particionamento por coluna 'dia'...")
+                        print(f"   🔄 Recriando tabela com particionamento por MÊS...")
                         client.delete_table(table_ref)
-                        # Criar nova tabela com schema e particionamento
                         table = bigquery.Table(table_ref, schema=schema)
-                        table.description = "Dados pluviométricos do NIMBUS (desde 1997)"
-                        # Como dia é TIMESTAMP, usar particionamento por coluna
+                        table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                         table.time_partitioning = bigquery.TimePartitioning(
-                            type_=bigquery.TimePartitioningType.DAY,
-                            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+                            type_=bigquery.TimePartitioningType.MONTH,
+                            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
                         )
                         table = client.create_table(table)
-                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia'!")
+                        print(f"✅ Tabela '{table_id}' recriada com particionamento por MÊS!")
                     else:
-                        # Tabela tem dados, não podemos converter
                         print(f"   ⚠️  Tabela '{table_id}' existe mas SEM particionamento e tem {table.num_rows:,} registros.")
                         print(f"   💡 BigQuery não permite converter tabela não particionada em particionada.")
                         print(f"   📋 Continuando sem particionamento (dados serão substituídos com WRITE_TRUNCATE).")
                         print(f"   💡 Para ter particionamento, delete a tabela manualmente e execute o script novamente.")
                 else:
-                    print(f"✅ Tabela '{table_id}' já existe com schema ({len(table.schema)} campos) e particionamento por coluna 'dia'!")
+                    print(f"✅ Tabela '{table_id}' já existe com schema ({len(table.schema)} campos) e particionamento por MÊS!")
                 return True
         except Exception as e:
             # Tabela não existe, criar
             if "Not found" in str(e) or "404" in str(e) or "does not exist" in str(e).lower():
-                print(f"   📋 Criando tabela '{table_id}' com schema e particionamento por MÊS...")
+                print(f"   📋 Criando tabela '{table_id}' com schema e particionamento...")
             else:
                 print(f"   ⚠️  Erro ao verificar tabela: {e}")
                 raise
         
         # Criar tabela com schema e particionamento
         table = bigquery.Table(table_ref, schema=schema)
-        # Descrição baseada no tipo de tabela
-        if table_id == 'pluviometricos':
-            table.description = "Dados pluviométricos do NIMBUS (desde 1997)"
-        elif table_id == 'meteorologicos':
-            table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
-        else:
-            table.description = f"Dados do NIMBUS - {table_id} (desde 1997)"
-        # Como dia é TIMESTAMP, podemos usar particionamento por coluna
-        # Isso melhora performance de queries e reduz custos
-        # Conforme: https://docs.cloud.google.com/bigquery/docs/partitioned-tables?hl=pt-br
+        table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
+        # Como dia é TIMESTAMP, usar particionamento por MÊS para evitar exceder limite de 10.000 partições
+        # Com dados desde 1997, particionamento por DIA excederia o limite (mais de 10.000 dias)
+        # Particionamento por MÊS reduz para ~340 partições (desde 1997 até hoje)
         table.time_partitioning = bigquery.TimePartitioning(
-            type_=bigquery.TimePartitioningType.DAY,
-            field="dia"  # Particionamento por coluna dia (TIMESTAMP)
+            type_=bigquery.TimePartitioningType.MONTH,
+            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
         )
         table = client.create_table(table, exists_ok=False)
-        print(f"✅ Tabela '{table_id}' criada com schema e particionamento por coluna 'dia' no BigQuery!")
+        print(f"✅ Tabela '{table_id}' criada com schema e particionamento por MÊS no BigQuery!")
         print(f"   💡 Particionamento melhora performance de queries e reduz custos")
         return True
     except Exception as e:
@@ -418,7 +391,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     
     print(f"\n📦 Processando e carregando dados {descricao} no BigQuery...")
     print(f"   💡 Usando formato Parquet para melhor performance")
-    print(f"   💡 Query usa DISTINCT ON (mesma lógica dos scripts servidor166)\n")
+    print(f"   💡 Query usa DISTINCT ON (mesma lógica dos dados pluviométricos)\n")
     
     # Criar diretório temporário para múltiplos arquivos Parquet
     temp_dir = tempfile.mkdtemp()
@@ -534,18 +507,56 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             except Exception:
                 return None
         
-        # Processar ambas as colunas: dia (TIMESTAMP) e dia_original (STRING)
+        def extrair_utc_offset(dt):
+            """Extrai o offset UTC do timestamp original (ex: -0300, -0200).
+            
+            Retorna apenas o offset como string no formato -0300 ou -0200.
+            """
+            if pd.isna(dt):
+                return None
+            try:
+                # Se já é string no formato correto, extrair offset
+                if isinstance(dt, str):
+                    # Verificar se já está no formato correto (tem timezone no final)
+                    if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                        # Extrair os últimos 5 caracteres (ex: -0300)
+                        return dt[-5:]
+                    # Tentar converter
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                # Extrair timezone offset
+                offset_str = "-0300"  # Padrão Brasil
+                if isinstance(dt_parsed, pd.Timestamp):
+                    if dt_parsed.tz is not None:
+                        offset = dt_parsed.tz.utcoffset(dt_parsed)
+                        if offset:
+                            total_seconds = offset.total_seconds()
+                            hours = int(total_seconds // 3600)
+                            minutes = int((abs(total_seconds) % 3600) // 60)
+                            # Formato: -0300 (sem dois pontos, como na NIMBUS)
+                            offset_str = f"{hours:+03d}{minutes:02d}"
+                
+                return offset_str
+            except Exception:
+                return None
+        
+        # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
         chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
+        chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
         chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
         
         if 'estacao_id' in chunk_df.columns:
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
         
         # Converter colunas numéricas se existirem
-        colunas_numericas = ['m05', 'm10', 'm15', 'h01', 'h04', 'h24', 'h96']
+        colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
         for col in colunas_numericas:
             if col in chunk_df.columns:
-                chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce')
+                chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
         
         # Filtrar registros com dia NULL
         registros_antes = len(chunk_df)
@@ -554,7 +565,9 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         if registros_antes != registros_depois:
             print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia NULL")
         
-        chunk_df['dia'] = pd.to_datetime(chunk_df['dia'], errors='coerce')
+        # IMPORTANTE: NÃO converter novamente para datetime aqui!
+        # A função processar_dia_timestamp() já retorna o tipo correto (datetime sem timezone)
+        # Converter novamente pode causar problemas de precisão (nanossegundos vs microssegundos)
         
         if len(chunk_df) > 0:
             chunks_list.append(chunk_df)
@@ -649,21 +662,18 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     return total_registros
 
 def exportar_para_bigquery():
-    """Exporta dados do NIMBUS diretamente para BigQuery."""
+    """Exporta dados meteorológicos do NIMBUS diretamente para BigQuery."""
     engine_nimbus = None
     client_bq = None
     
-    timestamp_atual = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
     try:
-        print("\n🔄 Iniciando exportação direta NIMBUS → BigQuery...")
+        print("\n🔄 Iniciando exportação direta NIMBUS → BigQuery (DADOS METEOROLÓGICOS)...")
         print(f"   Origem: alertadb @ NIMBUS")
         print(f"   Destino: BigQuery ({BIGQUERY_CONFIG['project_id']}.{BIGQUERY_CONFIG['dataset_id']}.{BIGQUERY_CONFIG['table_id']})")
         print()
         
-        # Conectar ao NIMBUS usando SQLAlchemy (recomendado pelo pandas)
+        # Conectar ao NIMBUS
         print("📦 Conectando ao NIMBUS...")
-        # Criar string de conexão PostgreSQL para SQLAlchemy
         connection_string = (
             f"postgresql://{ORIGEM['user']}:{ORIGEM['password']}@"
             f"{ORIGEM['host']}:{ORIGEM['port']}/{ORIGEM['dbname']}"
@@ -671,14 +681,13 @@ def exportar_para_bigquery():
         engine_nimbus = create_engine(
             connection_string,
             connect_args={'client_encoding': 'UTF8'},
-            pool_pre_ping=True  # Verifica conexão antes de usar
+            pool_pre_ping=True
         )
         
         # Conectar ao BigQuery
         print("📦 Conectando ao BigQuery...")
         credentials_path = BIGQUERY_CONFIG.get('credentials_path')
         
-        # Se não foi encontrado no carregamento, tentar novamente o caminho padrão
         if not credentials_path or not Path(credentials_path).exists():
             credentials_padrao = project_root / 'credentials' / 'credentials.json'
             print(f"   🔍 Verificando caminho padrão: {credentials_padrao}")
@@ -691,25 +700,14 @@ def exportar_para_bigquery():
         if credentials_path and Path(credentials_path).exists():
             print(f"   🔑 Usando credenciais: {credentials_path}")
             credentials = service_account.Credentials.from_service_account_file(
-                str(credentials_path)  # Garantir que é string
+                str(credentials_path)
             )
             client_bq = bigquery.Client(
                 project=BIGQUERY_CONFIG['project_id'],
                 credentials=credentials
             )
             print("   ✅ Credenciais carregadas com sucesso!")
-        elif credentials_path:
-            print(f"   ⚠️  Arquivo de credenciais não encontrado: {credentials_path}")
-            print(f"   🔍 Tentando caminho padrão: {project_root / 'credentials' / 'credentials.json'}")
-            raise FileNotFoundError(
-                f"❌ Arquivo de credenciais não encontrado!\n"
-                f"   Procurado em: {credentials_path}\n"
-                f"   Caminho padrão: {project_root / 'credentials' / 'credentials.json'}\n"
-                f"   💡 Coloque o arquivo credentials.json em: {project_root / 'credentials' / 'credentials.json'}"
-            )
         else:
-            print("   ⚠️  Nenhum arquivo de credenciais encontrado")
-            print(f"   🔍 Tentando caminho padrão: {project_root / 'credentials' / 'credentials.json'}")
             raise FileNotFoundError(
                 f"❌ Arquivo de credenciais não encontrado!\n"
                 f"   Caminho padrão: {project_root / 'credentials' / 'credentials.json'}\n"
@@ -719,73 +717,39 @@ def exportar_para_bigquery():
         # Criar dataset se não existir
         criar_dataset_se_nao_existir(client_bq, BIGQUERY_CONFIG['dataset_id'])
         
-        # Criar ambas as tabelas (pluviometricos e meteorologicos)
-        print("\n📋 Criando/verificando tabelas no BigQuery...")
-        
-        # 1. Tabela pluviometricos
-        schema_pluviometricos = obter_schema_pluviometricos()
-        criar_tabela_com_schema(
-            client_bq, 
-            BIGQUERY_CONFIG['dataset_id'], 
-            'pluviometricos', 
-            schema_pluviometricos
-        )
-        
-        # 2. Tabela meteorologicos
+        # Criar tabela
+        print("\n📋 Criando/verificando tabela no BigQuery...")
         schema_meteorologicos = obter_schema_meteorologicos()
         criar_tabela_com_schema(
             client_bq, 
             BIGQUERY_CONFIG['dataset_id'], 
-            'meteorologicos', 
+            BIGQUERY_CONFIG['table_id'], 
             schema_meteorologicos
         )
         
-        # Processar tabela pluviometricos
-        print("\n" + "=" * 80)
-        print("📊 PROCESSANDO TABELA: pluviometricos")
-        print("=" * 80)
-        
-        query_pluviometricos = query_todos_dados_pluviometricos()
-        total_pluviometricos = processar_e_carregar_tabela(
-            engine_nimbus=engine_nimbus,
-            client_bq=client_bq,
-            dataset_id=BIGQUERY_CONFIG['dataset_id'],
-            table_id='pluviometricos',
-            schema=schema_pluviometricos,
-            query=query_pluviometricos,
-            descricao="pluviométricos"
-        )
-        
-        # Processar tabela meteorologicos (quando query estiver pronta)
+        # Processar tabela meteorologicos
         print("\n" + "=" * 80)
         print("🌤️ PROCESSANDO TABELA: meteorologicos")
         print("=" * 80)
         
         query_meteorologicos = query_todos_dados_meteorologicos()
-        if query_meteorologicos:
-            total_meteorologicos = processar_e_carregar_tabela(
-                engine_nimbus=engine_nimbus,
-                client_bq=client_bq,
-                dataset_id=BIGQUERY_CONFIG['dataset_id'],
-                table_id='meteorologicos',
-                schema=schema_meteorologicos,
-                query=query_meteorologicos,
-                descricao="meteorológicos"
-            )
-        else:
-            print("   ⚠️  Query para meteorologicos ainda não implementada.")
-            print("   💡 A tabela foi criada, mas aguardando implementação da query.")
-            total_meteorologicos = 0
+        total_meteorologicos = processar_e_carregar_tabela(
+            engine_nimbus=engine_nimbus,
+            client_bq=client_bq,
+            dataset_id=BIGQUERY_CONFIG['dataset_id'],
+            table_id=BIGQUERY_CONFIG['table_id'],
+            schema=schema_meteorologicos,
+            query=query_meteorologicos,
+            descricao="meteorológicos"
+        )
         
         # Resumo final
         print("\n" + "=" * 80)
         print("✅ EXPORTAÇÃO CONCLUÍDA")
         print("=" * 80)
-        print(f"📊 pluviometricos: {total_pluviometricos:,} registros")
         print(f"🌤️ meteorologicos: {total_meteorologicos:,} registros")
-        print(f"📊 Total geral: {total_pluviometricos + total_meteorologicos:,} registros")
         
-        return total_pluviometricos + total_meteorologicos
+        return total_meteorologicos
 
     except Exception as e:
         print(f'\n❌ Erro na exportação: {e}')
@@ -795,29 +759,29 @@ def exportar_para_bigquery():
 
     finally:
         if engine_nimbus:
-            engine_nimbus.dispose()  # Fecha todas as conexões do pool SQLAlchemy
+            engine_nimbus.dispose()
 
 def main():
     """Função principal."""
     print("=" * 70)
-    print("🌧️ EXPORTAÇÃO DIRETA - NIMBUS → BigQuery")
+    print("🌤️ EXPORTAÇÃO DIRETA - DADOS METEOROLÓGICOS NIMBUS → BigQuery")
     print("=" * 70)
     print()
     print("🎯 PROPÓSITO:")
-    print("   Exportar TODOS os dados diretamente do NIMBUS")
+    print("   Exportar TODOS os dados METEOROLÓGICOS diretamente do NIMBUS")
     print("   para o BigQuery (pulando todas as camadas intermediárias)")
     print()
     print("📋 O QUE SERÁ FEITO:")
-    print("   ✅ Buscar TODOS os dados do NIMBUS (desde 1997)")
-    print("   ✅ Usar DISTINCT ON (mesma lógica dos scripts servidor166)")
+    print("   ✅ Buscar TODOS os dados meteorológicos do NIMBUS (desde 1997)")
+    print("   ✅ Usar DISTINCT ON (mesma lógica dos dados pluviométricos)")
     print("   ✅ Criar dataset/tabela no BigQuery se não existir")
-    print("   ✅ Exportar em formato Parquet completo (não dividido por ano)")
+    print("   ✅ Exportar em formato Parquet completo")
     print("   ✅ Carregar no BigQuery automaticamente")
     print()
     print("⚠️  IMPORTANTE:")
     print("   - Requer credenciais do GCP configuradas")
     print("   - Formato: Parquet (mais eficiente para BigQuery)")
-    print("   - Exportação completa: todos os dados em um único arquivo")
+    print("   - Exportação completa: todos os dados")
     print("   - Query usa DISTINCT ON para garantir unicidade")
     print("=" * 70)
     

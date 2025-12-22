@@ -57,13 +57,13 @@ if [ "$TIPO" = "cloudsql" ]; then
     LOG_FILE="$LOG_DIR/cloudsql_$(date +%Y%m%d_%H%M%S).log"
     TIPO_DESCRICAO="Cloud SQL"
 elif [ "$TIPO" = "bigquery" ]; then
-    SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_nimbus_para_bigquery.py"
+    SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py"
     LOG_FILE="$LOG_DIR/bigquery_$(date +%Y%m%d_%H%M%S).log"
-    TIPO_DESCRICAO="BigQuery (NIMBUS)"
+    TIPO_DESCRICAO="BigQuery (NIMBUS - Pluviométricos)"
 elif [ "$TIPO" = "bigquery_servidor166" ]; then
-    SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_servidor166_para_bigquery.py"
+    SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_pluviometricos_servidor166_bigquery.py"
     LOG_FILE="$LOG_DIR/bigquery_servidor166_$(date +%Y%m%d_%H%M%S).log"
-    TIPO_DESCRICAO="BigQuery (Servidor 166)"
+    TIPO_DESCRICAO="BigQuery (Servidor 166 - Pluviométricos)"
 else
     SCRIPT_PATH="$PROJECT_ROOT/scripts/servidor166/sincronizar_pluviometricos_novos.py"
     LOG_FILE="$LOG_DIR/sincronizacao_$(date +%Y%m%d_%H%M%S).log"

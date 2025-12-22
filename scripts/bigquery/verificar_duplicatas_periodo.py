@@ -170,7 +170,7 @@ def main():
         print("   O DISTINCT ON está pegando o registro com maior ID (mais recente)")
         print("   Mas pode haver registros com IDs diferentes mas valores diferentes")
         print("\n💡 SOLUÇÃO:")
-        print("   Execute novamente: python scripts/bigquery/exportar_nimbus_para_bigquery.py")
+        print("   Execute novamente: python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py")
         print("   Isso garantirá que os dados mais recentes sejam exportados")
     else:
         print("✅ NÃO HÁ DUPLICATAS")

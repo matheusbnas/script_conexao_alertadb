@@ -26,7 +26,7 @@ Guia completo para integração com Google BigQuery, incluindo configuração, c
 **Opção 1: NIMBUS → BigQuery (Direto)** ⭐ RECOMENDADO
 - Exporta diretamente do NIMBUS para BigQuery
 - Mais rápido (menos camadas)
-- Script: `scripts/bigquery/exportar_nimbus_para_bigquery.py`
+- Script: `scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py`
 
 **Opção 2: Cloud SQL → BigQuery (Federated Queries)**
 - Consulta dados do Cloud SQL diretamente no BigQuery
@@ -54,7 +54,7 @@ Guia completo para integração com Google BigQuery, incluindo configuração, c
 
 ### Script Automatizado
 
-O script `scripts/bigquery/exportar_nimbus_para_bigquery.py` faz automaticamente:
+O script `scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py` faz automaticamente:
 1. ✅ Conecta ao PostgreSQL (NIMBUS)
 2. ✅ Busca dados usando DISTINCT ON (mesma lógica do script original)
 3. ✅ Exporta para formato **Parquet** (mais eficiente que CSV/SQL)
@@ -243,7 +243,7 @@ BIGQUERY_DATASET_ID=pluviometricos
 BIGQUERY_TABLE_ID=pluviometricos
 
 # Executar
-python scripts/bigquery/exportar_nimbus_para_bigquery.py
+python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
 ```
 
 **Pronto!** Os dados estarão no BigQuery! 🎉
@@ -455,7 +455,7 @@ Para manter os dados atualizados automaticamente a cada 5 minutos, use o script 
 
 #### Pré-requisitos
 
-1. **Carga inicial concluída**: Executeu `exportar_nimbus_para_bigquery.py` com sucesso
+1. **Carga inicial concluída**: Executeu `exportar_pluviometricos_nimbus_bigquery.py` com sucesso
 2. **Servidor Linux** com acesso ao banco Nimbus
 3. **Python 3.8+** instalado
 4. **Credenciais do GCP** configuradas (`credentials/credentials.json`)
@@ -465,7 +465,7 @@ Para manter os dados atualizados automaticamente a cada 5 minutos, use o script 
 
 1. **Testar o Script Manualmente**
    ```bash
-   python scripts/bigquery/sincronizar_nimbus_para_bigquery.py --once
+   python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
    ```
 
 2. **Configurar Cron Automaticamente**
@@ -502,7 +502,7 @@ Se preferir fazer exportação completa periódica ao invés de incremental:
 
 2. **Testar o Script Manualmente**
    ```bash
-   python scripts/bigquery/exportar_nimbus_para_bigquery.py
+   python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
    ```
 
 3. **Configurar Cron**
@@ -513,13 +513,13 @@ Se preferir fazer exportação completa periódica ao invés de incremental:
 4. **Adicionar Linha para Executar Diariamente às 2h**
    ```bash
    # Exportar dados NIMBUS → BigQuery diariamente às 2h (completo)
-   0 2 * * * cd /caminho/para/script_conexao_alertadb && /caminho/para/python3 scripts/bigquery/exportar_nimbus_para_bigquery.py >> /var/log/bigquery_export.log 2>&1
+   0 2 * * * cd /caminho/para/script_conexao_alertadb && /caminho/para/python3 scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py >> /var/log/bigquery_export.log 2>&1
    ```
 
    **Ou executar a cada 6 horas:**
    ```bash
    # Exportar dados NIMBUS → BigQuery a cada 6 horas (completo)
-   0 */6 * * * cd /caminho/para/script_conexao_alertadb && /caminho/para/python3 scripts/bigquery/exportar_nimbus_para_bigquery.py >> /var/log/bigquery_export.log 2>&1
+   0 */6 * * * cd /caminho/para/script_conexao_alertadb && /caminho/para/python3 scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py >> /var/log/bigquery_export.log 2>&1
    ```
 
 ### Formato Cron

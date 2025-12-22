@@ -251,7 +251,7 @@ def comparar_dados():
             print(f"   - {len(diferencas)} registros com valores diferentes")
         
         print("\n💡 RECOMENDAÇÃO:")
-        print("   Execute novamente: python scripts/bigquery/exportar_nimbus_para_bigquery.py")
+        print("   Execute novamente: python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py")
         print("   Isso irá recarregar todos os dados do NIMBUS para o BigQuery")
 
 if __name__ == "__main__":

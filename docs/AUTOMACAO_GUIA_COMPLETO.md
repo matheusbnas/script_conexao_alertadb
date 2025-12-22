@@ -24,13 +24,13 @@ Antes de configurar o cron, certifique-se de que:
 1. ✅ **Carga inicial concluída**: 
    - Para servidor 166: Executeu `carregar_pluviometricos_historicos.py`
    - Para Cloud SQL: Executeu `carregar_para_cloudsql_inicial.py`
-   - Para BigQuery: Executeu `exportar_nimbus_para_bigquery.py`
+   - Para BigQuery: Executeu `exportar_pluviometricos_nimbus_bigquery.py`
 2. ✅ **Tabela populada**: A tabela `pluviometricos` contém dados históricos
 3. ✅ **Arquivo .env configurado**: Todas as variáveis de ambiente estão corretas
 4. ✅ **Script testado manualmente**: 
    - `sincronizar_pluviometricos_novos.py --once` (servidor 166)
    - `sincronizar_para_cloudsql.py --once` (Cloud SQL)
-   - `sincronizar_nimbus_para_bigquery.py --once` (BigQuery)
+   - `sincronizar_pluviometricos_nimbus_bigquery.py --once` (BigQuery)
 
 ---
 
@@ -363,7 +363,7 @@ Considere configurar alertas se:
    python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once
    
    # BigQuery
-   python3 scripts/bigquery/sincronizar_nimbus_para_bigquery.py --once
+   python3 scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
    ```
 
 ### Erro de caminho não encontrado

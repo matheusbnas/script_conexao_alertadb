@@ -1,38 +1,48 @@
 # 📊 Scripts BigQuery
 
-Scripts para exportar e sincronizar dados pluviométricos para Google BigQuery.
+Scripts para exportar e sincronizar dados pluviométricos e meteorológicos para Google BigQuery.
 
 ---
 
 ## 📋 Scripts Disponíveis
 
-### **Opção 1: NIMBUS → BigQuery (Direto)**
+### **🌧️ Dados Pluviométricos**
 
-#### `exportar_nimbus_para_bigquery.py`
-- **Função:** Carga inicial completa do NIMBUS para BigQuery
+#### **Opção 1: NIMBUS → BigQuery (Direto)**
+
+##### `exportar_pluviometricos_nimbus_bigquery.py`
+- **Função:** Carga inicial completa de dados pluviométricos do NIMBUS para BigQuery
 - **Uso:** Executar uma vez para carregar todos os dados históricos
-- **Coluna `dia`:** STRING no formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
+- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
 
-#### `sincronizar_nimbus_para_bigquery.py`
-- **Função:** Sincronização incremental do NIMBUS para BigQuery
+##### `sincronizar_pluviometricos_nimbus_bigquery.py`
+- **Função:** Sincronização incremental de dados pluviométricos do NIMBUS para BigQuery
 - **Uso:** Executar via cron a cada 5 minutos
-- **Coluna `dia`:** STRING no formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
+- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
+
+#### **Opção 2: Servidor 166 → BigQuery (Com Controle Administrativo)**
+
+##### `exportar_pluviometricos_servidor166_bigquery.py`
+- **Função:** Carga inicial completa de dados pluviométricos do servidor 166 para BigQuery
+- **Uso:** Executar uma vez para carregar todos os dados históricos
+- **Vantagem:** Você tem controle total dos dados (admin do banco)
+- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
+
+##### `sincronizar_pluviometricos_servidor166_bigquery.py`
+- **Função:** Sincronização incremental de dados pluviométricos do servidor 166 para BigQuery
+- **Uso:** Executar via cron a cada 5 minutos
+- **Vantagem:** Você tem controle total dos dados (admin do banco)
+- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
 
 ---
 
-### **Opção 2: Servidor 166 → BigQuery (Com Controle Administrativo)**
+### **🌤️ Dados Meteorológicos**
 
-#### `exportar_servidor166_para_bigquery.py`
-- **Função:** Carga inicial completa do servidor 166 para BigQuery
+#### `exportar_meteorologicos_nimbus_bigquery.py`
+- **Função:** Carga inicial completa de dados meteorológicos do NIMBUS para BigQuery
 - **Uso:** Executar uma vez para carregar todos os dados históricos
-- **Vantagem:** Você tem controle total dos dados (admin do banco)
-- **Coluna `dia`:** STRING no formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
-
-#### `sincronizar_servidor166_para_bigquery.py`
-- **Função:** Sincronização incremental do servidor 166 para BigQuery
-- **Uso:** Executar via cron a cada 5 minutos
-- **Vantagem:** Você tem controle total dos dados (admin do banco)
-- **Coluna `dia`:** STRING no formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
+- **Campos:** chuva, dirVento, velVento, temperatura, pressao, umidade
+- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
 
 ---
 
@@ -55,41 +65,41 @@ Scripts para exportar e sincronizar dados pluviométricos para Google BigQuery.
 
 ## 📊 Formato da Coluna `dia`
 
-**Todos os scripts preservam o formato exato da NIMBUS:**
+**Todos os scripts usam TIMESTAMP no BigQuery:**
 
 ```
-Formato: 2009-02-16 02:12:20.000 -0300
-Tipo no BigQuery: STRING
+Tipo no BigQuery: TIMESTAMP (UTC)
+Coluna adicional: dia_original (STRING) - formato exato da NIMBUS
 ```
 
 **Características:**
-- ✅ Formato exato como vem da NIMBUS
-- ✅ Preserva timezone (`-0300` ou `-0200`)
-- ✅ Mostra claramente horário padrão vs horário de verão
-- ✅ Formato legível e fácil de consultar
+- ✅ Coluna `dia`: TIMESTAMP em UTC (padrão BigQuery)
+- ✅ Coluna `dia_original`: STRING com formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
+- ✅ Preserva timezone original na coluna `dia_original`
+- ✅ Facilita consultas usando TIMESTAMP nativo do BigQuery
 
 ---
 
 ## 🚀 Como Usar
 
-### **Carga Inicial (Escolha uma opção):**
+### **🌧️ Dados Pluviométricos - Carga Inicial (Escolha uma opção):**
 
 #### Opção 1: NIMBUS → BigQuery
 ```bash
-python scripts/bigquery/exportar_nimbus_para_bigquery.py
+python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
 ```
 
 #### Opção 2: Servidor 166 → BigQuery
 ```bash
-python scripts/bigquery/exportar_servidor166_para_bigquery.py
+python scripts/bigquery/exportar_pluviometricos_servidor166_bigquery.py
 ```
 
-### **Sincronização Incremental (Escolha uma opção):**
+### **🌧️ Dados Pluviométricos - Sincronização Incremental (Escolha uma opção):**
 
 #### Opção 1: NIMBUS → BigQuery
 ```bash
 # Testar manualmente
-python scripts/bigquery/sincronizar_nimbus_para_bigquery.py --once
+python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
 
 # Configurar cron
 cd automacao
@@ -99,11 +109,17 @@ cd automacao
 #### Opção 2: Servidor 166 → BigQuery
 ```bash
 # Testar manualmente
-python scripts/bigquery/sincronizar_servidor166_para_bigquery.py --once
+python scripts/bigquery/sincronizar_pluviometricos_servidor166_bigquery.py --once
 
 # Configurar cron
 cd automacao
 ./configurar_cron.sh bigquery_servidor166
+```
+
+### **🌤️ Dados Meteorológicos - Carga Inicial:**
+
+```bash
+python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py
 ```
 
 ---
@@ -112,7 +128,7 @@ cd automacao
 
 ### Variáveis Obrigatórias no `.env`
 
-#### Para NIMBUS → BigQuery:
+#### Para NIMBUS → BigQuery (Pluviométricos):
 ```env
 # Banco NIMBUS
 DB_ORIGEM_HOST=10.2.223.114
@@ -126,7 +142,21 @@ BIGQUERY_DATASET_ID_NIMBUS=alertadb_cor_raw
 BIGQUERY_TABLE_ID=pluviometricos
 ```
 
-#### Para Servidor 166 → BigQuery:
+#### Para NIMBUS → BigQuery (Meteorológicos):
+```env
+# Banco NIMBUS
+DB_ORIGEM_HOST=10.2.223.114
+DB_ORIGEM_NAME=alertadb
+DB_ORIGEM_USER=planejamento_cor
+DB_ORIGEM_PASSWORD=sua_senha
+
+# BigQuery (NIMBUS → BigQuery)
+BIGQUERY_PROJECT_ID=alertadb-cor
+BIGQUERY_DATASET_ID_NIMBUS=alertadb_cor_raw
+BIGQUERY_TABLE_ID_METEOROLOGICOS=meteorologicos
+```
+
+#### Para Servidor 166 → BigQuery (Pluviométricos):
 ```env
 # Banco Servidor 166
 DB_DESTINO_HOST=localhost
