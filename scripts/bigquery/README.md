@@ -96,7 +96,22 @@ python scripts/bigquery/exportar_pluviometricos_servidor166_bigquery.py
 
 ### **🌧️ Dados Pluviométricos - Sincronização Incremental (Escolha uma opção):**
 
-#### Opção 1: NIMBUS → BigQuery
+#### Opção 1: Prefect (Recomendado - com monitoramento de erros)
+```bash
+# Configurar Prefect
+cd automacao
+./configurar_prefect.sh
+
+# Iniciar servidor Prefect (em terminal separado)
+prefect server start
+
+# Executar workflow (em outro terminal)
+python scripts/bigquery/prefect_workflow_bigquery.py
+```
+**Vantagens:** Interface web, detecção automática de erros, retry automático, logs estruturados  
+**Documentação:** [../../docs/PREFECT_README.md](../../docs/PREFECT_README.md)
+
+#### Opção 2: NIMBUS → BigQuery (via Cron)
 ```bash
 # Testar manualmente
 python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
@@ -106,7 +121,7 @@ cd automacao
 ./configurar_cron.sh bigquery
 ```
 
-#### Opção 2: Servidor 166 → BigQuery
+#### Opção 3: Servidor 166 → BigQuery (via Cron)
 ```bash
 # Testar manualmente
 python scripts/bigquery/sincronizar_pluviometricos_servidor166_bigquery.py --once
@@ -177,6 +192,7 @@ BIGQUERY_TABLE_ID=pluviometricos
 - **Guia Completo:** [docs/BIGQUERY_GUIA_COMPLETO.md](../../docs/BIGQUERY_GUIA_COMPLETO.md)
 - **Compartilhar Acesso:** [docs/BIGQUERY_COMPARTILHAR_ACESSO.md](../../docs/BIGQUERY_COMPARTILHAR_ACESSO.md)
 - **Automação:** [docs/AUTOMACAO_GUIA_COMPLETO.md](../../docs/AUTOMACAO_GUIA_COMPLETO.md)
+- **Prefect Workflow:** [../../docs/PREFECT_README.md](../../docs/PREFECT_README.md)
 
 ---
 

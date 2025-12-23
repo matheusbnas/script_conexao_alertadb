@@ -214,7 +214,7 @@ ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
 def obter_schema_pluviometricos():
     """Retorna schema do BigQuery para tabela pluviometricos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do NIMBUS (preserva timezone original). Armazenado em UTC no BigQuery."),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição no horário local do Brasil. Origem: TIMESTAMPTZ NOT NULL do NIMBUS. Armazenado como horário local (mesmo que dia_original)."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
@@ -383,7 +383,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     print(f"   💡 Isso pode levar alguns minutos dependendo do volume de dados...")
     
     inicio_query = datetime.now()
-    chunksize = 10000
+    chunksize = 5000  # Reduzido de 10000 para 5000 para evitar problemas de memória
     total_registros = 0
     chunk_numero = 1
     
@@ -406,7 +406,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     
     import gc
     chunks_list = []
-    batch_size = 4
+    batch_size = 2  # Reduzido de 4 para 2 para evitar problemas de memória
     batch_file_num = 1
     
     for chunk_df in pd.read_sql(query, engine_nimbus, chunksize=chunksize):
@@ -552,9 +552,42 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
                 return None
         
         # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+        # IMPORTANTE: Salvar dia_original ANTES de modificar dia
         chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
         chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
-        chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
+        
+        # Converter dia para horário local (sem timezone) para que seja igual ao dia_original
+        # O BigQuery armazena TIMESTAMP, mas vamos armazenar o horário local (não UTC)
+        def converter_para_horario_local_sem_timezone(dt):
+            """Converte timestamp para horário local (sem timezone) para que dia seja igual a dia_original."""
+            if pd.isna(dt):
+                return None
+            try:
+                # Converter para pandas Timestamp se necessário
+                if isinstance(dt, str):
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                    dt_parsed = pd.Timestamp(dt)
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                # Se tem timezone, converter para horário local e remover timezone
+                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+                    # Converter para timezone do Brasil (America/Sao_Paulo) e depois remover timezone
+                    # Isso preserva o horário local (ex: 14:15) em vez de UTC (ex: 11:15)
+                    dt_local = dt_parsed.tz_convert('America/Sao_Paulo')
+                    return dt_local.tz_localize(None)
+                else:
+                    # Sem timezone, assumir que já está em horário local
+                    return dt_parsed
+            except Exception as e:
+                print(f"      ⚠️  Erro ao converter para horário local: {e}")
+                return None
+        
+        # Usar horário local na coluna dia (mesmo horário que dia_original)
+        chunk_df['dia'] = chunk_df['dia'].apply(converter_para_horario_local_sem_timezone)
         
         if 'estacao_id' in chunk_df.columns:
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
@@ -581,40 +614,75 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         total_registros += len(chunk_df)
         chunk_numero += 1
         
-        # Escrever batch em arquivo Parquet
+        # Escrever batch em arquivo Parquet (processar em lotes menores para evitar problemas de memória)
         if len(chunks_list) >= batch_size:
-            df_batch = pd.concat(chunks_list, ignore_index=True)
-            batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
-            df_batch.to_parquet(
-                batch_file, 
-                index=False, 
-                engine='pyarrow', 
-                compression='snappy',
-                coerce_timestamps='us'
-            )
-            parquet_files.append(batch_file)
-            print(f"      💾 Batch {batch_file_num} salvo: {batch_file.stat().st_size / (1024*1024):.2f} MB")
-            chunks_list.clear()
-            del df_batch
-            gc.collect()
-            batch_file_num += 1
+            try:
+                df_batch = pd.concat(chunks_list, ignore_index=True)
+                batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
+                df_batch.to_parquet(
+                    batch_file, 
+                    index=False, 
+                    engine='pyarrow', 
+                    compression='snappy',
+                    coerce_timestamps='us'
+                )
+                parquet_files.append(batch_file)
+                print(f"      💾 Batch {batch_file_num} salvo: {batch_file.stat().st_size / (1024*1024):.2f} MB")
+                chunks_list.clear()
+                del df_batch
+                gc.collect()
+                batch_file_num += 1
+            except MemoryError:
+                # Se houver erro de memória, tentar processar chunks individuais
+                print(f"      ⚠️  Erro de memória ao concatenar batch. Processando chunks individuais...")
+                for idx, single_chunk in enumerate(chunks_list):
+                    single_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}_chunk_{idx}.parquet'
+                    single_chunk.to_parquet(
+                        single_file,
+                        index=False,
+                        engine='pyarrow',
+                        compression='snappy',
+                        coerce_timestamps='us'
+                    )
+                    parquet_files.append(single_file)
+                chunks_list.clear()
+                gc.collect()
+                batch_file_num += 1
     
     # Escrever chunks restantes
     if chunks_list:
-        df_batch = pd.concat(chunks_list, ignore_index=True)
-        df_batch = df_batch[df_batch['dia'].notna()]
-        if len(df_batch) > 0:
-            batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
-            df_batch.to_parquet(
-                batch_file, 
-                index=False, 
-                engine='pyarrow', 
-                compression='snappy',
-                coerce_timestamps='us'
-            )
-            parquet_files.append(batch_file)
-            print(f"      💾 Batch {batch_file_num} salvo: {batch_file.stat().st_size / (1024*1024):.2f} MB")
-            del df_batch
+        try:
+            df_batch = pd.concat(chunks_list, ignore_index=True)
+            df_batch = df_batch[df_batch['dia'].notna()]
+            if len(df_batch) > 0:
+                batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
+                df_batch.to_parquet(
+                    batch_file, 
+                    index=False, 
+                    engine='pyarrow', 
+                    compression='snappy',
+                    coerce_timestamps='us'
+                )
+                parquet_files.append(batch_file)
+                print(f"      💾 Batch {batch_file_num} salvo: {batch_file.stat().st_size / (1024*1024):.2f} MB")
+                del df_batch
+                gc.collect()
+        except MemoryError:
+            # Se houver erro de memória, processar chunks individuais
+            print(f"      ⚠️  Erro de memória. Processando chunks restantes individualmente...")
+            for idx, single_chunk in enumerate(chunks_list):
+                single_chunk = single_chunk[single_chunk['dia'].notna()]
+                if len(single_chunk) > 0:
+                    single_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}_chunk_{idx}.parquet'
+                    single_chunk.to_parquet(
+                        single_file,
+                        index=False,
+                        engine='pyarrow',
+                        compression='snappy',
+                        coerce_timestamps='us'
+                    )
+                    parquet_files.append(single_file)
+            chunks_list.clear()
             gc.collect()
     
     if total_registros == 0:

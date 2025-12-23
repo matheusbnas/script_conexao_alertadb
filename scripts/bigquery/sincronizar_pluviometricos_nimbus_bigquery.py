@@ -463,9 +463,40 @@ def sincronizar_incremental():
                     return None
             
             # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+            # IMPORTANTE: Salvar dia_original ANTES de modificar dia
             chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
             chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
-            chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
+            
+            # Converter dia para horário local (sem timezone) para que seja igual ao dia_original
+            def converter_para_horario_local_sem_timezone(dt):
+                """Converte timestamp para horário local (sem timezone) para que dia seja igual a dia_original."""
+                if pd.isna(dt):
+                    return None
+                try:
+                    if isinstance(dt, str):
+                        dt_parsed = pd.to_datetime(dt)
+                    elif isinstance(dt, pd.Timestamp):
+                        dt_parsed = dt
+                    elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                        dt_parsed = pd.Timestamp(dt)
+                    else:
+                        dt_parsed = pd.to_datetime(dt)
+                    
+                    # Se tem timezone, converter para horário local e remover timezone
+                    if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+                        # Converter para timezone do Brasil (America/Sao_Paulo) e depois remover timezone
+                        # Isso preserva o horário local (ex: 14:15) em vez de UTC (ex: 11:15)
+                        dt_local = dt_parsed.tz_convert('America/Sao_Paulo')
+                        return dt_local.tz_localize(None)
+                    else:
+                        # Sem timezone, assumir que já está em horário local
+                        return dt_parsed
+                except Exception as e:
+                    print(f"      ⚠️  Erro ao converter para horário local: {e}")
+                    return None
+            
+            # Usar horário local na coluna dia (mesmo horário que dia_original)
+            chunk_df['dia'] = chunk_df['dia'].apply(converter_para_horario_local_sem_timezone)
             
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
