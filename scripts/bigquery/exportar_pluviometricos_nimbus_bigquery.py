@@ -41,7 +41,7 @@ VANTAGENS:
 ✅ Cria/atualiza tabela no BigQuery com estrutura IDÊNTICA ao servidor166
 ✅ Processa em lotes de 10.000 registros para otimizar memória
 ✅ Usa TIMESTAMP para coluna dia (igual ao servidor166)
-✅ Converte timezone para UTC (padrão BigQuery)
+✅ Converte timezone para horário local de SP (America/Sao_Paulo) - dia e dia_original com mesmo horário
 ✅ Particionamento por coluna dia (melhora performance)
 
 ═══════════════════════════════════════════════════════════════════════════
@@ -214,9 +214,9 @@ ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
 def obter_schema_pluviometricos():
     """Retorna schema do BigQuery para tabela pluviometricos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição no horário local do Brasil. Origem: TIMESTAMPTZ NOT NULL do NIMBUS. Armazenado como horário local (mesmo que dia_original)."),
-        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
-        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em horário local de São Paulo (America/Sao_Paulo). IMPORTANTE: O BigQuery não tem TIMESTAMPTZ, então este campo armazena o horário local de SP como se fosse UTC. O valor numérico corresponde ao horário local de SP (mesmo que dia_original). Exemplo: se dia_original é '1997-01-02 11:08:40.000 -0300', então dia é '1997-01-02 11:08:40' (horário local de SP, não UTC). Para ver o horário correto com offset, use dia_original."),
+        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Mesmo horário que dia, mas formatado como string com offset UTC. Use este campo para ver o horário correto com timezone."),
+        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone de São Paulo (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão). Use este campo para converter dia de horário local de SP para UTC se necessário."),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
@@ -424,170 +424,85 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             if col in chunk_df.columns:
                 chunk_df = chunk_df.drop(columns=[col])
         
-        # Processar coluna dia: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
-        def processar_dia_timestamp(dt):
-            """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC).
+        # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+        # IMPORTANTE: Converter para timezone de SP (America/Sao_Paulo) primeiro
+        # para garantir que dia e dia_original tenham o mesmo horário local
+        
+        def converter_para_sp_e_processar(dt):
+            """Converte timestamp para timezone de SP e retorna (dia_local, dia_original_str, utc_offset_str).
             
-            A coluna horaLeitura no banco NIMBUS é TIMESTAMPTZ NOT NULL (preserva timezone original).
-            O BigQuery armazena TIMESTAMP em UTC internamente, então convertemos preservando o valor correto.
+            IMPORTANTE: O BigQuery não tem TIMESTAMPTZ, apenas TIMESTAMP (que é armazenado em UTC).
+            Para que dia e dia_original representem o mesmo horário local de SP, salvamos:
+            - dia: horário local de SP (sem timezone) - o BigQuery vai interpretar como UTC, mas o valor
+              numérico corresponde ao horário local de SP (ex: "1997-01-02 11:08:40")
+            - dia_original: string com horário local de SP e offset (ex: "1997-01-02 11:08:40.000 -0300")
             
-            IMPORTANTE: Preserva o timezone original do TIMESTAMPTZ antes de converter para UTC.
+            Quando lido do BigQuery, dia aparecerá como se fosse UTC, mas na verdade é horário local de SP.
+            Use dia_original para ver o horário correto com offset, ou converta dia usando utc_offset.
+            
+            Retorna uma tupla com:
+            - dia_local: timestamp sem timezone (horário local de SP, não UTC)
+            - dia_original_str: string formatada como "YYYY-MM-DD HH:MM:SS.mmm -0300" (horário local de SP)
+            - utc_offset_str: string com offset UTC (ex: "-0300" ou "-0200")
             """
             if pd.isna(dt):
-                return None
+                return (None, None, None)
             try:
                 # Converter para pandas Timestamp se necessário
                 if isinstance(dt, str):
-                    # Tentar parsear preservando timezone se presente na string
                     dt_parsed = pd.to_datetime(dt)
                 elif isinstance(dt, pd.Timestamp):
                     dt_parsed = dt
                 elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
-                    # Se já é datetime com timezone (TIMESTAMPTZ do PostgreSQL)
                     dt_parsed = pd.Timestamp(dt)
                 else:
                     dt_parsed = pd.to_datetime(dt)
                 
-                # Se já tem timezone (TIMESTAMPTZ do PostgreSQL), converter para UTC preservando o valor
+                # Se tem timezone, converter para timezone de SP (America/Sao_Paulo)
                 if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
-                    # Converter para UTC mantendo o valor absoluto correto
-                    dt_utc = dt_parsed.tz_convert('UTC')
-                    # Remover timezone info para BigQuery (ele armazena como UTC internamente)
-                    return dt_utc.tz_localize(None)
-                elif isinstance(dt_parsed, pd.Timestamp):
-                    # Se não tem timezone, pode ser que o PostgreSQL retornou sem timezone
-                    # Neste caso, assumir que já está no timezone do servidor (Brasil -03:00)
-                    # e converter para UTC
-                    from datetime import timezone, timedelta
-                    tz_brasil = timezone(timedelta(hours=-3))
-                    dt_com_tz = dt_parsed.tz_localize(tz_brasil)
-                    dt_utc = dt_com_tz.tz_convert('UTC')
-                    return dt_utc.tz_localize(None)
+                    # Converter para timezone de SP
+                    dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
                 else:
-                    return dt_parsed
-            except Exception as e:
-                print(f"      ⚠️  Erro ao processar timestamp: {e}")
-                return None
-        
-        def formatar_dia_original(dt):
-            """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300
-            
-            Preserva o formato STRING original como vem do banco da NIMBUS/servidor166.
-            """
-            if pd.isna(dt):
-                return None
-            try:
-                # Se já é string no formato correto, retornar como está
-                if isinstance(dt, str):
-                    # Verificar se já está no formato correto (tem timezone no final)
-                    if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
-                        return dt
-                    # Tentar converter
-                    dt_parsed = pd.to_datetime(dt)
-                elif isinstance(dt, pd.Timestamp):
-                    dt_parsed = dt
+                    # Sem timezone, assumir que já está em UTC e converter para SP
+                    dt_parsed = dt_parsed.tz_localize('UTC')
+                    dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
+                
+                # Extrair offset UTC do timezone de SP
+                offset = dt_sp.tz.utcoffset(dt_sp)
+                if offset:
+                    total_seconds = offset.total_seconds()
+                    hours = int(total_seconds // 3600)
+                    minutes = int((abs(total_seconds) % 3600) // 60)
+                    # Formato: -0300 (sem dois pontos, como na NIMBUS)
+                    utc_offset_str = f"{hours:+03d}{minutes:02d}"
                 else:
-                    dt_parsed = pd.to_datetime(dt)
+                    utc_offset_str = "-0300"  # Padrão Brasil
                 
-                # Extrair timezone offset
-                offset_str = "-0300"  # Padrão Brasil
-                if isinstance(dt_parsed, pd.Timestamp):
-                    if dt_parsed.tz is not None:
-                        offset = dt_parsed.tz.utcoffset(dt_parsed)
-                        if offset:
-                            total_seconds = offset.total_seconds()
-                            hours = int(total_seconds // 3600)
-                            minutes = int((abs(total_seconds) % 3600) // 60)
-                            # Formato: -0300 (sem dois pontos, como na NIMBUS)
-                            offset_str = f"{hours:+03d}{minutes:02d}"
-                
-                # Formatar: 2009-02-16 02:12:20.000 -0300
-                timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
-                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
+                # Formatar dia_original como string: "YYYY-MM-DD HH:MM:SS.mmm -0300" (horário local de SP)
+                timestamp_str = dt_sp.strftime('%Y-%m-%d %H:%M:%S')
+                if dt_sp.microsecond:
                     # Pegar apenas os 3 primeiros dígitos dos microsegundos
-                    microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
+                    microsec_str = str(dt_sp.microsecond)[:3].zfill(3)
                     timestamp_str += f".{microsec_str}"
                 else:
                     timestamp_str += ".000"
                 
-                return f"{timestamp_str} {offset_str}"
-            except Exception:
-                return None
-        
-        def extrair_utc_offset(dt):
-            """Extrai o offset UTC do timestamp original (ex: -0300, -0200).
-            
-            Retorna apenas o offset como string no formato -0300 ou -0200.
-            """
-            if pd.isna(dt):
-                return None
-            try:
-                # Se já é string no formato correto, extrair offset
-                if isinstance(dt, str):
-                    # Verificar se já está no formato correto (tem timezone no final)
-                    if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
-                        # Extrair os últimos 5 caracteres (ex: -0300)
-                        return dt[-5:]
-                    # Tentar converter
-                    dt_parsed = pd.to_datetime(dt)
-                elif isinstance(dt, pd.Timestamp):
-                    dt_parsed = dt
-                else:
-                    dt_parsed = pd.to_datetime(dt)
+                dia_original_str = f"{timestamp_str} {utc_offset_str}"
                 
-                # Extrair timezone offset
-                offset_str = "-0300"  # Padrão Brasil
-                if isinstance(dt_parsed, pd.Timestamp):
-                    if dt_parsed.tz is not None:
-                        offset = dt_parsed.tz.utcoffset(dt_parsed)
-                        if offset:
-                            total_seconds = offset.total_seconds()
-                            hours = int(total_seconds // 3600)
-                            minutes = int((abs(total_seconds) % 3600) // 60)
-                            # Formato: -0300 (sem dois pontos, como na NIMBUS)
-                            offset_str = f"{hours:+03d}{minutes:02d}"
+                # Salvar horário local de SP (sem timezone) - mesmo horário que dia_original
+                # IMPORTANTE: O BigQuery vai interpretar como UTC, mas o valor é horário local de SP
+                dia_local = dt_sp.tz_localize(None)  # Remover timezone, mantendo horário local de SP
                 
-                return offset_str
-            except Exception:
-                return None
-        
-        # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
-        # IMPORTANTE: Salvar dia_original ANTES de modificar dia
-        chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
-        chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
-        
-        # Converter dia para horário local (sem timezone) para que seja igual ao dia_original
-        # O BigQuery armazena TIMESTAMP, mas vamos armazenar o horário local (não UTC)
-        def converter_para_horario_local_sem_timezone(dt):
-            """Converte timestamp para horário local (sem timezone) para que dia seja igual a dia_original."""
-            if pd.isna(dt):
-                return None
-            try:
-                # Converter para pandas Timestamp se necessário
-                if isinstance(dt, str):
-                    dt_parsed = pd.to_datetime(dt)
-                elif isinstance(dt, pd.Timestamp):
-                    dt_parsed = dt
-                elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
-                    dt_parsed = pd.Timestamp(dt)
-                else:
-                    dt_parsed = pd.to_datetime(dt)
-                
-                # Se tem timezone, converter para horário local e remover timezone
-                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
-                    # Converter para timezone do Brasil (America/Sao_Paulo) e depois remover timezone
-                    # Isso preserva o horário local (ex: 14:15) em vez de UTC (ex: 11:15)
-                    dt_local = dt_parsed.tz_convert('America/Sao_Paulo')
-                    return dt_local.tz_localize(None)
-                else:
-                    # Sem timezone, assumir que já está em horário local
-                    return dt_parsed
+                return (dia_local, dia_original_str, utc_offset_str)
             except Exception as e:
-                print(f"      ⚠️  Erro ao converter para horário local: {e}")
-                return None
+                print(f"      ⚠️  Erro ao processar timestamp: {e}")
+                return (None, None, None)
         
-        # Usar horário local na coluna dia (mesmo horário que dia_original)
-        chunk_df['dia'] = chunk_df['dia'].apply(converter_para_horario_local_sem_timezone)
+        # Processar todos os timestamps de uma vez
+        resultados = chunk_df['dia'].apply(converter_para_sp_e_processar)
+        chunk_df['dia'] = resultados.apply(lambda x: x[0])
+        chunk_df['dia_original'] = resultados.apply(lambda x: x[1])
+        chunk_df['utc_offset'] = resultados.apply(lambda x: x[2])
         
         if 'estacao_id' in chunk_df.columns:
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
