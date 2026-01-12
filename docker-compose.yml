@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  prefect-service:
+    build: .
+    container_name: prefect-bigquery-sync
+    restart: unless-stopped
+    
+    environment:
+      # Prefect
+      - PREFECT_WORKFLOW=${PREFECT_WORKFLOW:-combinado}
+      - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
+      - PREFECT_API_URL=${PREFECT_API_URL:-}
+      
+      # Banco de dados (do .env ou variáveis de ambiente)
+      - DB_ORIGEM_HOST=${DB_ORIGEM_HOST}
+      - DB_ORIGEM_PORT=${DB_ORIGEM_PORT:-5432}
+      - DB_ORIGEM_NAME=${DB_ORIGEM_NAME}
+      - DB_ORIGEM_USER=${DB_ORIGEM_USER}
+      - DB_ORIGEM_PASSWORD=${DB_ORIGEM_PASSWORD}
+      - DB_ORIGEM_SSLMODE=${DB_ORIGEM_SSLMODE:-disable}
+      
+      # BigQuery
+      - BIGQUERY_PROJECT_ID=${BIGQUERY_PROJECT_ID}
+      - BIGQUERY_DATASET_ID_NIMBUS=${BIGQUERY_DATASET_ID_NIMBUS:-alertadb_cor_raw}
+      - BIGQUERY_TABLE_ID=${BIGQUERY_TABLE_ID:-pluviometricos}
+      - BIGQUERY_TABLE_ID_METEOROLOGICOS=${BIGQUERY_TABLE_ID_METEOROLOGICOS:-meteorologicos}
+    
+    volumes:
+      # Credenciais GCP
+      - ./credentials:/app/credentials:ro
+      # Arquivo .env
+      - ./.env:/app/.env:ro
+      # Logs
+      - ./logs:/app/logs
+      # Estado do serviço
+      - ./scripts/prefect/.prefect_service_state.json:/app/scripts/prefect/.prefect_service_state.json
+    
+    networks:
+      - prefect-network
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/scripts/prefect/.prefect_service_state.json') else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  prefect-network:
+    driver: bridge

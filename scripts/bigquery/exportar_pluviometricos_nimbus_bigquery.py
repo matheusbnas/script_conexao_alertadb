@@ -68,10 +68,17 @@ from sqlalchemy import create_engine
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
+import sys
 from datetime import datetime
 from dotenv import load_dotenv
 from pathlib import Path
 import tempfile
+
+# Configurar encoding UTF-8 para Windows (resolve problema com emojis)
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Carregar variáveis de ambiente
 project_root = Path(__file__).parent.parent.parent
@@ -214,8 +221,8 @@ ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
 def obter_schema_pluviometricos():
     """Retorna schema do BigQuery para tabela pluviometricos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em horário local de São Paulo (America/Sao_Paulo). IMPORTANTE: O BigQuery não tem TIMESTAMPTZ, então este campo armazena o horário local de SP como se fosse UTC. O valor numérico corresponde ao horário local de SP (mesmo que dia_original). Exemplo: se dia_original é '1997-01-02 11:08:40.000 -0300', então dia é '1997-01-02 11:08:40' (horário local de SP, não UTC). Para ver o horário correto com offset, use dia_original."),
-        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Mesmo horário que dia, mas formatado como string com offset UTC. Use este campo para ver o horário correto com timezone."),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em horário local de São Paulo (America/Sao_Paulo). IMPORTANTE: Este campo contém o mesmo horário que dia_original, preservando exatamente o valor do banco NIMBUS. O BigQuery interpreta como UTC, mas o valor numérico corresponde ao horário local de SP. Exemplo: se dia_original é '1997-01-02 11:08:40.000 -0300', então dia é '1997-01-02 11:08:40' (horário local de SP, não UTC)."),
+        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Horário local de São Paulo com offset UTC. Este campo contém o mesmo horário que dia, formatado como string com offset."),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone de São Paulo (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão). Use este campo para converter dia de horário local de SP para UTC se necessário."),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
@@ -229,18 +236,63 @@ def obter_schema_pluviometricos():
     ]
 
 def criar_dataset_se_nao_existir(client, dataset_id):
-    """Cria dataset no BigQuery se não existir."""
+    """Cria dataset no BigQuery se não existir.
+    
+    Tenta criar na região do Brasil (southamerica-east1) primeiro.
+    Se falhar (permissão ou região não habilitada), usa a região padrão (US).
+    
+    IMPORTANTE: A região não afeta os timestamps, apenas onde os dados são processados.
+    Os dados sempre são salvos com horário local de SP, independente da região.
+    """
     try:
         dataset_ref = client.dataset(dataset_id)
-        dataset = bigquery.Dataset(dataset_ref)
-        dataset.location = "US"  # ou "us-west1" se preferir
-        dataset.description = "Dados pluviométricos do NIMBUS"
         
-        dataset = client.create_dataset(dataset, exists_ok=True)
-        print(f"✅ Dataset '{dataset_id}' criado/verificado no BigQuery!")
-        return True
+        # Verificar se o dataset já existe
+        try:
+            existing_dataset = client.get_dataset(dataset_ref)
+            if existing_dataset.location:
+                print(f"✅ Dataset '{dataset_id}' já existe na região '{existing_dataset.location}'")
+                print(f"   💡 A região não afeta os timestamps (dados continuam com horário local de SP)")
+            return True
+        except Exception:
+            # Dataset não existe, tentar criar
+            pass
+        
+        # Tentar criar na região do Brasil primeiro
+        regioes_para_tentar = [
+            ("southamerica-east1", "Brasil (São Paulo)"),
+            ("US", "Estados Unidos (padrão)"),
+        ]
+        
+        for regiao, descricao in regioes_para_tentar:
+            try:
+                dataset = bigquery.Dataset(dataset_ref)
+                dataset.location = regiao
+                dataset.description = "Dados pluviométricos do NIMBUS (Brasil - SP)"
+                
+                dataset = client.create_dataset(dataset, exists_ok=False)
+                print(f"✅ Dataset '{dataset_id}' criado no BigQuery (região: {regiao} - {descricao})!")
+                return True
+            except Exception as e:
+                error_str = str(e).lower()
+                if "permission denied" in error_str or "not exist" in error_str or "not available" in error_str:
+                    # Região não disponível ou sem permissão, tentar próxima
+                    if regiao != regioes_para_tentar[-1][0]:  # Se não for a última
+                        print(f"   ⚠️  Não foi possível criar na região '{regiao}' ({descricao})")
+                        print(f"   💡 Tentando próxima região...")
+                        continue
+                    else:
+                        # Última tentativa falhou
+                        raise
+                else:
+                    # Outro tipo de erro, propagar
+                    raise
+        
+        return False
     except Exception as e:
-        print(f"⚠️  Erro ao criar dataset: {e}")
+        print(f"❌ Erro ao criar dataset: {e}")
+        print(f"   💡 Verifique se você tem permissões para criar datasets no BigQuery")
+        print(f"   💡 Ou se a região está habilitada no seu projeto GCP")
         return False
 
 def criar_tabela_com_schema(client, dataset_id, table_id, schema):
@@ -398,7 +450,8 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     
     print(f"\n📦 Processando e carregando dados {descricao} no BigQuery...")
     print(f"   💡 Usando formato Parquet para melhor performance")
-    print(f"   💡 Query usa DISTINCT ON (mesma lógica dos scripts servidor166)\n")
+    print(f"   💡 Query usa DISTINCT ON (mesma lógica dos scripts servidor166)")
+    print(f"   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade\n")
     
     # Criar diretório temporário para múltiplos arquivos Parquet
     temp_dir = tempfile.mkdtemp()
@@ -429,19 +482,18 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         # para garantir que dia e dia_original tenham o mesmo horário local
         
         def converter_para_sp_e_processar(dt):
-            """Converte timestamp para timezone de SP e retorna (dia_local, dia_original_str, utc_offset_str).
+            """Converte timestamp e retorna (dia_local, dia_original_str, utc_offset_str).
             
-            IMPORTANTE: O BigQuery não tem TIMESTAMPTZ, apenas TIMESTAMP (que é armazenado em UTC).
-            Para que dia e dia_original representem o mesmo horário local de SP, salvamos:
-            - dia: horário local de SP (sem timezone) - o BigQuery vai interpretar como UTC, mas o valor
-              numérico corresponde ao horário local de SP (ex: "1997-01-02 11:08:40")
+            IMPORTANTE: Preservamos o horário local de SP exatamente como vem do NIMBUS.
+            - dia: horário local de SP (sem timezone) - mesmo valor que dia_original
             - dia_original: string com horário local de SP e offset (ex: "1997-01-02 11:08:40.000 -0300")
+            - utc_offset: offset UTC do timezone de SP (ex: "-0300" ou "-0200")
             
-            Quando lido do BigQuery, dia aparecerá como se fosse UTC, mas na verdade é horário local de SP.
-            Use dia_original para ver o horário correto com offset, ou converta dia usando utc_offset.
+            O BigQuery vai interpretar dia como UTC, mas o valor numérico corresponde ao horário local de SP.
+            Isso garante que dia seja igual a dia_original (mesmo horário, sem conversão).
             
             Retorna uma tupla com:
-            - dia_local: timestamp sem timezone (horário local de SP, não UTC)
+            - dia_local: timestamp sem timezone (horário local de SP, não convertido para UTC)
             - dia_original_str: string formatada como "YYYY-MM-DD HH:MM:SS.mmm -0300" (horário local de SP)
             - utc_offset_str: string com offset UTC (ex: "-0300" ou "-0200")
             """
@@ -458,9 +510,9 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
                 else:
                     dt_parsed = pd.to_datetime(dt)
                 
-                # Se tem timezone, converter para timezone de SP (America/Sao_Paulo)
+                # Se tem timezone, converter para timezone de SP primeiro para obter horário local
                 if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
-                    # Converter para timezone de SP
+                    # Converter para timezone de SP para obter horário local e offset
                     dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
                 else:
                     # Sem timezone, assumir que já está em UTC e converter para SP
@@ -490,7 +542,9 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
                 dia_original_str = f"{timestamp_str} {utc_offset_str}"
                 
                 # Salvar horário local de SP (sem timezone) - mesmo horário que dia_original
-                # IMPORTANTE: O BigQuery vai interpretar como UTC, mas o valor é horário local de SP
+                # IMPORTANTE: Não convertemos para UTC. Mantemos o horário local de SP.
+                # O BigQuery vai interpretar como UTC, mas o valor numérico é o horário local de SP.
+                # Isso garante que dia seja igual a dia_original (mesmo horário).
                 dia_local = dt_sp.tz_localize(None)  # Remover timezone, mantendo horário local de SP
                 
                 return (dia_local, dia_original_str, utc_offset_str)
@@ -520,6 +574,14 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         if registros_antes != registros_depois:
             print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia NULL")
         
+        # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
+        # A conversão de timezone pode criar duplicatas mesmo com DISTINCT ON na query
+        registros_antes_dedup = len(chunk_df)
+        chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        registros_depois_dedup = len(chunk_df)
+        if registros_antes_dedup != registros_depois_dedup:
+            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia, estacao_id)")
+        
         # IMPORTANTE: NÃO converter novamente para datetime aqui!
         # A função processar_dia_timestamp() já retorna o tipo correto (datetime sem timezone)
         # Converter novamente pode causar problemas de precisão (nanossegundos vs microssegundos)
@@ -533,6 +595,12 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         if len(chunks_list) >= batch_size:
             try:
                 df_batch = pd.concat(chunks_list, ignore_index=True)
+                # Remover duplicatas antes de salvar (pode haver duplicatas entre chunks)
+                registros_antes_batch = len(df_batch)
+                df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+                registros_depois_batch = len(df_batch)
+                if registros_antes_batch != registros_depois_batch:
+                    print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
                 batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
                 df_batch.to_parquet(
                     batch_file, 
@@ -569,6 +637,12 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         try:
             df_batch = pd.concat(chunks_list, ignore_index=True)
             df_batch = df_batch[df_batch['dia'].notna()]
+            # Remover duplicatas antes de salvar
+            registros_antes_final = len(df_batch)
+            df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            registros_depois_final = len(df_batch)
+            if registros_antes_final != registros_depois_final:
+                print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
             if len(df_batch) > 0:
                 batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
                 df_batch.to_parquet(

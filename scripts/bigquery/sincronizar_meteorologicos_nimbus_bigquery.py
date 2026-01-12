@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-🌧️ SINCRONIZAÇÃO INCREMENTAL - NIMBUS → BigQuery
+🌤️ SINCRONIZAÇÃO INCREMENTAL - DADOS METEOROLÓGICOS NIMBUS → BigQuery
 
 ═══════════════════════════════════════════════════════════════════════════
 🎯 PROPÓSITO DESTE SCRIPT:
@@ -10,17 +10,17 @@
 
 Este script sincroniza APENAS os dados NOVOS desde a última sincronização
 do banco NIMBUS para o BigQuery, usando EXATAMENTE a mesma lógica e estrutura
-do script exportar_pluviometricos_nimbus_bigquery.py.
+do script exportar_meteorologicos_nimbus_bigquery.py.
 
 ARQUITETURA:
     NIMBUS (alertadb) → Parquet → BigQuery (incremental)
               ↑ [ESTE SCRIPT - SINCRONIZAÇÃO INCREMENTAL]
 
 QUERY UTILIZADA:
-    ✅ DISTINCT ON (el."horaLeitura", el.estacao_id)
+    ✅ GROUP BY (l."horaLeitura", l.estacao_id, e.nome)
     ✅ WHERE horaLeitura > ultima_sincronizacao (apenas dados novos)
-    ✅ ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC
-    ✅ MESMA query do exportar_pluviometricos_nimbus_bigquery.py com filtro WHERE
+    ✅ ORDER BY l."horaLeitura"
+    ✅ MESMA query do exportar_meteorologicos_nimbus_bigquery.py com filtro WHERE
 
 VANTAGENS:
     ✅ Sincronização incremental (apenas dados novos)
@@ -34,34 +34,34 @@ VANTAGENS:
 📋 O QUE ESTE SCRIPT FAZ:
 ═══════════════════════════════════════════════════════════════════════════
 
-✅ Busca último timestamp no BigQuery (MAX(dia))
-✅ Busca APENAS dados novos desde esse timestamp no NIMBUS
+✅ Busca último timestamp no BigQuery (MAX(dia)) por estação
+✅ Busca APENAS dados novos desde esses timestamps no NIMBUS
 ✅ Exporta para formato Parquet (mesma estrutura do script de exportação)
 ✅ Carrega no BigQuery usando WRITE_APPEND
 ✅ Processa em lotes para otimizar memória
-✅ Preserva tipos de dados e timezone corretamente
+✅ Preserva tipos de dados e timezone corretamente (UTC)
 ✅ Usa EXATAMENTE a mesma lógica do script de exportação
 
 ═══════════════════════════════════════════════════════════════════════════
 ⚠️ QUANDO USAR ESTE SCRIPT:
 ═══════════════════════════════════════════════════════════════════════════
 
-✅ APÓS executar exportar_pluviometricos_nimbus_bigquery.py (carga inicial)
+✅ APÓS executar exportar_meteorologicos_nimbus_bigquery.py (carga inicial)
 ✅ Para manter os dados atualizados automaticamente via cron
 ✅ Em produção/servidor para sincronização contínua
 ✅ Quando você precisa de dados atualizados a cada 5 minutos
 
 ⚠️ NÃO USE se:
-   ❌ A tabela BigQuery estiver vazia (use exportar_pluviometricos_nimbus_bigquery.py primeiro)
-   ❌ Você quer carregar dados históricos (use exportar_pluviometricos_nimbus_bigquery.py)
+   ❌ A tabela BigQuery estiver vazia (use exportar_meteorologicos_nimbus_bigquery.py primeiro)
+   ❌ Você quer carregar dados históricos (use exportar_meteorologicos_nimbus_bigquery.py)
 
 ═══════════════════════════════════════════════════════════════════════════
 🚀 COMO USAR:
 ═══════════════════════════════════════════════════════════════════════════
 
-1. PRIMEIRO: Execute exportar_pluviometricos_nimbus_bigquery.py para carga inicial
+1. PRIMEIRO: Execute exportar_meteorologicos_nimbus_bigquery.py para carga inicial
 2. Configure o arquivo .env com as credenciais
-3. Execute: python sincronizar_pluviometricos_nimbus_bigquery.py --once
+3. Execute: python sincronizar_meteorologicos_nimbus_bigquery.py --once
 4. Configure cron para executar a cada 5 minutos
 
 ═══════════════════════════════════════════════════════════════════════════
@@ -132,7 +132,7 @@ def carregar_configuracoes():
         bigquery_config = {
             'project_id': obter_variavel('BIGQUERY_PROJECT_ID'),
             'dataset_id': obter_variavel('BIGQUERY_DATASET_ID_NIMBUS', obrigatoria=False, padrao='alertadb_cor_raw'),
-            'table_id': obter_variavel('BIGQUERY_TABLE_ID', obrigatoria=False, padrao='pluviometricos'),
+            'table_id': obter_variavel('BIGQUERY_TABLE_ID_METEOROLOGICOS', obrigatoria=False, padrao='meteorologicos'),
             'credentials_path': str(credentials_path) if credentials_path else None,
         }
         
@@ -163,11 +163,8 @@ def testar_conexao_nimbus():
 def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
     """Obtém o último timestamp sincronizado do BigQuery (TIMESTAMP).
     
-    IMPORTANTE: O campo dia está salvo como horário local de SP (não UTC).
-    O BigQuery retorna sem timezone, mas o valor corresponde ao horário local de SP.
-    Precisamos converter para UTC para comparar com TIMESTAMPTZ do NIMBUS.
-    
-    Retorna o menor timestamp entre todas as estações para garantir que não perdemos dados.
+    IMPORTANTE: O campo dia está salvo em UTC no BigQuery.
+    O BigQuery retorna sem timezone, mas o valor corresponde a UTC.
     """
     try:
         query = f"""
@@ -181,18 +178,13 @@ def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
             if row.ultima_sincronizacao:
                 ultima_sync = row.ultima_sincronizacao
                 if isinstance(ultima_sync, datetime):
-                    # O timestamp do BigQuery vem sem timezone, mas representa horário local de SP
-                    # Precisamos converter para UTC assumindo que está em America/Sao_Paulo
+                    # O timestamp do BigQuery vem sem timezone, mas representa UTC
                     if ultima_sync.tzinfo is None:
-                        tz_sp = pytz.timezone('America/Sao_Paulo')
-                        # Localizar o timestamp como se fosse horário local de SP
-                        dt_sp = tz_sp.localize(ultima_sync)
-                        # Converter para UTC
-                        dt_utc = dt_sp.astimezone(timezone.utc)
-                        return dt_utc.replace(tzinfo=timezone.utc)
+                        # Assumir que está em UTC
+                        return ultima_sync.replace(tzinfo=timezone.utc)
                     else:
-                        # Se já tem timezone, usar diretamente
-                        return ultima_sync
+                        # Se já tem timezone, converter para UTC
+                        return ultima_sync.astimezone(timezone.utc)
                 break
         
         return datetime(1997, 1, 1, tzinfo=timezone.utc)
@@ -201,7 +193,7 @@ def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
         return datetime(1997, 1, 1, tzinfo=timezone.utc)
 
 def obter_ultima_sincronizacao_por_estacao(client, dataset_id, table_id):
-    """Obtém o último timestamp sincronizado POR estação_id do BigQuery.
+    """Obtém o último timestamp sincronizado POR estacao_id do BigQuery.
     
     Retorna um dicionário {estacao_id: ultimo_timestamp_utc} para evitar duplicações.
     """
@@ -223,12 +215,10 @@ def obter_ultima_sincronizacao_por_estacao(client, dataset_id, table_id):
                 if isinstance(ultima_sync, datetime):
                     # Converter para UTC
                     if ultima_sync.tzinfo is None:
-                        tz_sp = pytz.timezone('America/Sao_Paulo')
-                        dt_sp = tz_sp.localize(ultima_sync)
-                        dt_utc = dt_sp.astimezone(timezone.utc)
-                        ultimas_por_estacao[row.estacao_id] = dt_utc.replace(tzinfo=timezone.utc)
+                        # Assumir que está em UTC
+                        ultimas_por_estacao[row.estacao_id] = ultima_sync.replace(tzinfo=timezone.utc)
                     else:
-                        ultimas_por_estacao[row.estacao_id] = ultima_sync
+                        ultimas_por_estacao[row.estacao_id] = ultima_sync.astimezone(timezone.utc)
         
         return ultimas_por_estacao
     except Exception as e:
@@ -238,7 +228,7 @@ def obter_ultima_sincronizacao_por_estacao(client, dataset_id, table_id):
 def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
     """Retorna query para buscar apenas dados novos desde a última sincronização.
     
-    MESMA query do exportar_pluviometricos_nimbus_bigquery.py, mas com WHERE.
+    MESMA query do exportar_meteorologicos_nimbus_bigquery.py, mas com WHERE.
     
     IMPORTANTE: ultima_sincronizacao deve estar em UTC (vem de obter_ultima_sincronizacao_bigquery).
     
@@ -272,55 +262,63 @@ def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
                 elif ultima_estacao.tzinfo != timezone.utc:
                     ultima_estacao = ultima_estacao.astimezone(timezone.utc)
                 timestamp_estacao = ultima_estacao.strftime('%Y-%m-%d %H:%M:%S+00:00')
-                condicoes_estacao.append(f"(el.estacao_id = {estacao_id} AND el.\"horaLeitura\" > '{timestamp_estacao}'::timestamptz)")
+                condicoes_estacao.append(f"(l.estacao_id = {estacao_id} AND l.\"horaLeitura\" > '{timestamp_estacao}'::timestamptz)")
         
         # Adicionar estações que não estão no BigQuery ainda (se houver estações no BigQuery)
         if len(ultimas_por_estacao) > 0:
             estacao_ids_str = ','.join(map(str, ultimas_por_estacao.keys()))
-            condicoes_estacao.append(f"el.estacao_id NOT IN ({estacao_ids_str})")
+            condicoes_estacao.append(f"l.estacao_id NOT IN ({estacao_ids_str})")
         
         where_clause = "(" + " OR ".join(condicoes_estacao) + ")"
     else:
         # Usar filtro geral (fallback)
-        where_clause = f"el.\"horaLeitura\" > '{timestamp_str}'::timestamptz"
+        where_clause = f"l.\"horaLeitura\" > '{timestamp_str}'::timestamptz"
     
-    # MESMA query do script de exportação, mas com WHERE mais preciso
+    # MESMA query do script de exportação (GROUP BY), mas com WHERE mais preciso
     return f"""
-SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
-    el."horaLeitura" AS "Dia",  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
-    elc.m05,
-    elc.m10,
-    elc.m15,
-    elc.h01,
-    elc.h04,
-    elc.h24,
-    elc.h96,
-    ee.nome AS "Estacao",
-    el.estacao_id
-FROM public.estacoes_leitura AS el
-JOIN public.estacoes_leiturachuva AS elc
-    ON elc.leitura_id = el.id
-JOIN public.estacoes_estacao AS ee
-    ON ee.id = el.estacao_id
+SELECT
+    l."horaLeitura" AS data_hora,  -- simples e já com timezone correto
+    l.estacao_id AS id_estacao,
+    e.nome       AS nome_estacao,
+    MAX(CASE WHEN s.nome = 'Chuva'                 THEN ls.valor END) AS chuva,
+    MAX(CASE WHEN s.nome = 'Direção Vento'         THEN ls.valor END) AS dirVento,
+    MAX(CASE WHEN s.nome = 'Velocidade Vento'      THEN ls.valor END) AS velVento,
+    MAX(CASE WHEN s.nome = 'Temperatura do Ar'     THEN ls.valor END) AS temperatura,
+    MAX(CASE WHEN s.nome = 'Pressão Atmosférica'   THEN ls.valor END) AS pressao,
+    MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade
+
+FROM public.estacoes_leiturasensor ls
+JOIN public.estacoes_leitura l
+      ON ls.leitura_id = l.id
+JOIN public.estacoes_sensor s
+      ON ls.sensor_id = s.id
+JOIN public.estacoes_estacao e
+      ON e.id = l.estacao_id
+
 WHERE {where_clause}
-ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
+
+GROUP BY
+    l."horaLeitura",
+    l.estacao_id,
+    e.nome
+
+ORDER BY l."horaLeitura";
 """
 
-def obter_schema_pluviometricos():
-    """Retorna schema do BigQuery para tabela pluviometricos."""
+def obter_schema_meteorologicos():
+    """Retorna schema do BigQuery para tabela meteorologicos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em horário local de São Paulo (America/Sao_Paulo). IMPORTANTE: Este campo contém o mesmo horário que dia_original, preservando exatamente o valor do banco NIMBUS. O BigQuery interpreta como UTC, mas o valor numérico corresponde ao horário local de SP. Exemplo: se dia_original é '1997-01-02 11:08:40.000 -0300', então dia é '1997-01-02 11:08:40' (horário local de SP, não UTC)."),
-        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Horário local de São Paulo com offset UTC. Este campo contém o mesmo horário que dia, formatado como string com offset."),
-        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone de São Paulo (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão). Use este campo para converter dia de horário local de SP para UTC se necessário."),
-        bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h01", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h04", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h24", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h96", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do NIMBUS (preserva timezone original). Armazenado em UTC no BigQuery."),
+        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
+        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
+        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE", description="Nome da estação meteorológica"),
+        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED", description="ID da estação meteorológica"),
+        bigquery.SchemaField("chuva", "FLOAT64", mode="NULLABLE", description="Chuva (mm)"),
+        bigquery.SchemaField("dirVento", "FLOAT64", mode="NULLABLE", description="Direção do vento (graus)"),
+        bigquery.SchemaField("velVento", "FLOAT64", mode="NULLABLE", description="Velocidade do vento (m/s ou km/h)"),
+        bigquery.SchemaField("temperatura", "FLOAT64", mode="NULLABLE", description="Temperatura do ar (°C)"),
+        bigquery.SchemaField("pressao", "FLOAT64", mode="NULLABLE", description="Pressão atmosférica (hPa)"),
+        bigquery.SchemaField("umidade", "FLOAT64", mode="NULLABLE", description="Umidade do ar (%)"),
     ]
 
 def sincronizar_incremental():
@@ -332,7 +330,7 @@ def sincronizar_incremental():
     client_bq = None
     
     try:
-        print("\n🔄 Iniciando sincronização incremental NIMBUS → BigQuery...")
+        print("\n🔄 Iniciando sincronização incremental NIMBUS → BigQuery (DADOS METEOROLÓGICOS)...")
         print(f"   Origem: alertadb @ NIMBUS")
         print(f"   Destino: BigQuery ({BIGQUERY_CONFIG['project_id']}.{BIGQUERY_CONFIG['dataset_id']}.{BIGQUERY_CONFIG['table_id']})")
         print()
@@ -386,7 +384,7 @@ def sincronizar_incremental():
                     print(f"   ⚠️  A sincronização irá FALHAR se tentar carregar dados!")
                     print(f"\n💡 SOLUÇÃO OBRIGATÓRIA:")
                     print(f"   1. Execute o script de exportação para recriar a tabela com particionamento por MÊS:")
-                    print(f"      python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py")
+                    print(f"      python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py")
                     print(f"   2. Isso vai recriar a tabela com particionamento por MÊS e recarregar todos os dados")
                     print(f"   3. Depois execute a sincronização novamente")
                     print(f"\n⚠️  Sincronização CANCELADA para evitar erro!")
@@ -412,7 +410,7 @@ def sincronizar_incremental():
             
             if ultima_sincronizacao == datetime(1997, 1, 1, tzinfo=timezone.utc):
                 print("⚠️  Tabela BigQuery está vazia ou não encontrada!")
-                print("   Execute PRIMEIRO: python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py")
+                print("   Execute PRIMEIRO: python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py")
                 print("   para fazer a carga inicial dos dados históricos.")
                 return False
             
@@ -440,23 +438,23 @@ def sincronizar_incremental():
         query = query_dados_incrementais(ultima_sincronizacao_geral, ultimas_por_estacao)
         
         # Processar e carregar - EXATAMENTE a mesma lógica do script de exportação
-        schema = obter_schema_pluviometricos()
+        schema = obter_schema_meteorologicos()
         
         inicio_query = datetime.now()
-        chunksize = 10000
+        chunksize = 5000
         total_registros = 0
         chunk_numero = 1
         
         print(f"\n📦 Processando e carregando dados incrementais no BigQuery...")
         print(f"   💡 Usando formato Parquet para melhor performance")
-        print(f"   💡 Query usa DISTINCT ON (mesma lógica dos scripts servidor166)")
+        print(f"   💡 Query usa GROUP BY para agregar dados dos sensores")
         print(f"   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade\n")
         
         temp_dir = tempfile.mkdtemp()
         parquet_files = []
         
         chunks_list = []
-        batch_size = 4
+        batch_size = 2
         batch_file_num = 1
         
         for chunk_df in pd.read_sql(query, engine_nimbus, chunksize=chunksize):
@@ -464,8 +462,9 @@ def sincronizar_incremental():
             
             # Renomear colunas
             chunk_df = chunk_df.rename(columns={
-                'Dia': 'dia',
-                'Estacao': 'estacao'
+                'data_hora': 'dia',
+                'id_estacao': 'estacao_id',
+                'nome_estacao': 'estacao'
             })
             
             # Remover colunas auxiliares
@@ -474,30 +473,12 @@ def sincronizar_incremental():
                 if col in chunk_df.columns:
                     chunk_df = chunk_df.drop(columns=[col])
             
-            # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
-            # IMPORTANTE: Converter para timezone de SP (America/Sao_Paulo) primeiro
-            # para garantir que dia e dia_original tenham o mesmo horário local
-            
-            def converter_para_sp_e_processar(dt):
-                """Converte timestamp e retorna (dia_local, dia_original_str, utc_offset_str).
-                
-                IMPORTANTE: Preservamos o horário local de SP exatamente como vem do NIMBUS.
-                - dia: horário local de SP (sem timezone) - mesmo valor que dia_original
-                - dia_original: string com horário local de SP e offset (ex: "1997-01-02 11:08:40.000 -0300")
-                - utc_offset: offset UTC do timezone de SP (ex: "-0300" ou "-0200")
-                
-                O BigQuery vai interpretar dia como UTC, mas o valor numérico corresponde ao horário local de SP.
-                Isso garante que dia seja igual a dia_original (mesmo horário, sem conversão).
-                
-                Retorna uma tupla com:
-                - dia_local: timestamp sem timezone (horário local de SP, não convertido para UTC)
-                - dia_original_str: string formatada como "YYYY-MM-DD HH:MM:SS.mmm -0300" (horário local de SP)
-                - utc_offset_str: string com offset UTC (ex: "-0300" ou "-0200")
-                """
+            # Processar coluna dia: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
+            def processar_dia_timestamp(dt):
+                """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC)."""
                 if pd.isna(dt):
-                    return (None, None, None)
+                    return None
                 try:
-                    # Converter para pandas Timestamp se necessário
                     if isinstance(dt, str):
                         dt_parsed = pd.to_datetime(dt)
                     elif isinstance(dt, pd.Timestamp):
@@ -507,60 +488,95 @@ def sincronizar_incremental():
                     else:
                         dt_parsed = pd.to_datetime(dt)
                     
-                    # Se tem timezone, converter para timezone de SP primeiro para obter horário local
                     if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
-                        # Converter para timezone de SP para obter horário local e offset
-                        dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
+                        dt_utc = dt_parsed.tz_convert('UTC')
+                        return dt_utc.tz_localize(None)
+                    elif isinstance(dt_parsed, pd.Timestamp):
+                        from datetime import timezone, timedelta
+                        tz_brasil = timezone(timedelta(hours=-3))
+                        dt_com_tz = dt_parsed.tz_localize(tz_brasil)
+                        dt_utc = dt_com_tz.tz_convert('UTC')
+                        return dt_utc.tz_localize(None)
                     else:
-                        # Sem timezone, assumir que já está em UTC e converter para SP
-                        dt_parsed = dt_parsed.tz_localize('UTC')
-                        dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
-                    
-                    # Extrair offset UTC do timezone de SP
-                    offset = dt_sp.tz.utcoffset(dt_sp)
-                    if offset:
-                        total_seconds = offset.total_seconds()
-                        hours = int(total_seconds // 3600)
-                        minutes = int((abs(total_seconds) % 3600) // 60)
-                        # Formato: -0300 (sem dois pontos, como na NIMBUS)
-                        utc_offset_str = f"{hours:+03d}{minutes:02d}"
+                        return dt_parsed
+                except Exception as e:
+                    print(f"      ⚠️  Erro ao processar timestamp: {e}")
+                    return None
+            
+            def formatar_dia_original(dt):
+                """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300"""
+                if pd.isna(dt):
+                    return None
+                try:
+                    if isinstance(dt, str):
+                        if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                            return dt
+                        dt_parsed = pd.to_datetime(dt)
+                    elif isinstance(dt, pd.Timestamp):
+                        dt_parsed = dt
                     else:
-                        utc_offset_str = "-0300"  # Padrão Brasil
+                        dt_parsed = pd.to_datetime(dt)
                     
-                    # Formatar dia_original como string: "YYYY-MM-DD HH:MM:SS.mmm -0300" (horário local de SP)
-                    timestamp_str = dt_sp.strftime('%Y-%m-%d %H:%M:%S')
-                    if dt_sp.microsecond:
-                        # Pegar apenas os 3 primeiros dígitos dos microsegundos
-                        microsec_str = str(dt_sp.microsecond)[:3].zfill(3)
+                    offset_str = "-0300"
+                    if isinstance(dt_parsed, pd.Timestamp):
+                        if dt_parsed.tz is not None:
+                            offset = dt_parsed.tz.utcoffset(dt_parsed)
+                            if offset:
+                                total_seconds = offset.total_seconds()
+                                hours = int(total_seconds // 3600)
+                                minutes = int((abs(total_seconds) % 3600) // 60)
+                                offset_str = f"{hours:+03d}{minutes:02d}"
+                    
+                    timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
+                    if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
+                        microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
                         timestamp_str += f".{microsec_str}"
                     else:
                         timestamp_str += ".000"
                     
-                    dia_original_str = f"{timestamp_str} {utc_offset_str}"
-                    
-                    # Salvar horário local de SP (sem timezone) - mesmo horário que dia_original
-                    # IMPORTANTE: Não convertemos para UTC. Mantemos o horário local de SP.
-                    # O BigQuery vai interpretar como UTC, mas o valor numérico é o horário local de SP.
-                    # Isso garante que dia seja igual a dia_original (mesmo horário).
-                    dia_local = dt_sp.tz_localize(None)  # Remover timezone, mantendo horário local de SP
-                    
-                    return (dia_local, dia_original_str, utc_offset_str)
-                except Exception as e:
-                    print(f"      ⚠️  Erro ao processar timestamp: {e}")
-                    return (None, None, None)
+                    return f"{timestamp_str} {offset_str}"
+                except Exception:
+                    return None
             
-            # Processar todos os timestamps de uma vez
-            resultados = chunk_df['dia'].apply(converter_para_sp_e_processar)
-            chunk_df['dia'] = resultados.apply(lambda x: x[0])
-            chunk_df['dia_original'] = resultados.apply(lambda x: x[1])
-            chunk_df['utc_offset'] = resultados.apply(lambda x: x[2])
+            def extrair_utc_offset(dt):
+                """Extrai o offset UTC do timestamp original (ex: -0300, -0200)."""
+                if pd.isna(dt):
+                    return None
+                try:
+                    if isinstance(dt, str):
+                        if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                            return dt[-5:]
+                        dt_parsed = pd.to_datetime(dt)
+                    elif isinstance(dt, pd.Timestamp):
+                        dt_parsed = dt
+                    else:
+                        dt_parsed = pd.to_datetime(dt)
+                    
+                    offset_str = "-0300"
+                    if isinstance(dt_parsed, pd.Timestamp):
+                        if dt_parsed.tz is not None:
+                            offset = dt_parsed.tz.utcoffset(dt_parsed)
+                            if offset:
+                                total_seconds = offset.total_seconds()
+                                hours = int(total_seconds // 3600)
+                                minutes = int((abs(total_seconds) % 3600) // 60)
+                                offset_str = f"{hours:+03d}{minutes:02d}"
+                    
+                    return offset_str
+                except Exception:
+                    return None
+            
+            # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+            chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
+            chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
+            chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
             
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
             
             # Converter colunas numéricas - manter tipo original do banco (não forçar float64)
             # O banco pode retornar INTEGER ou NUMERIC, manter como vem
-            colunas_numericas = ['m05', 'm10', 'm15', 'h01', 'h04', 'h24', 'h96']
+            colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
             for col in colunas_numericas:
                 if col in chunk_df.columns:
                     # Converter para numérico mas manter tipo original (int se for int, float se for float)
@@ -575,7 +591,7 @@ def sincronizar_incremental():
                 print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia NULL")
             
             # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
-            # A conversão de timezone pode criar duplicatas mesmo com DISTINCT ON na query
+            # A conversão de timezone pode criar duplicatas mesmo com GROUP BY na query
             registros_antes_dedup = len(chunk_df)
             chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
             registros_depois_dedup = len(chunk_df)
@@ -712,10 +728,10 @@ def main():
             sys.exit(0 if sucesso else 1)
         else:
             print("=" * 80)
-            print("🌧️ SINCRONIZAÇÃO INCREMENTAL - NIMBUS → BigQuery")
+            print("🌤️ SINCRONIZAÇÃO INCREMENTAL - DADOS METEOROLÓGICOS NIMBUS → BigQuery")
             print("=" * 80)
             print("\n⚠️  Para usar com cron, execute com --once:")
-            print("   python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once")
+            print("   python scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py --once")
             print("\n🔄 Executando sincronização única...\n")
             sucesso = sincronizar_incremental()
             if sucesso:

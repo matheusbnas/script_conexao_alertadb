@@ -1,0 +1,30 @@
+[Unit]
+Description=Prefect Service - Sincronização BigQuery (Pluviométricos + Meteorológicos)
+After=network.target postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/caminho/do/projeto
+Environment="PATH=/usr/bin:/usr/local/bin:/usr/local/sbin"
+Environment="PYTHONIOENCODING=utf-8"
+
+# Executar o serviço Prefect
+ExecStart=/usr/bin/python3 /caminho/do/projeto/scripts/prefect/prefect_service.py --workflow combinado --intervalo 5
+
+# Reiniciar automaticamente em caso de falha
+Restart=always
+RestartSec=30
+
+# Limites de recursos
+LimitNOFILE=65536
+TimeoutStopSec=300
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prefect-service
+
+[Install]
+WantedBy=multi-user.target

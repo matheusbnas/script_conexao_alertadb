@@ -9,17 +9,17 @@
 ═══════════════════════════════════════════════════════════════════════════
 
 Este script exporta dados METEOROLÓGICOS diretamente do banco NIMBUS (alertadb) 
-para o BigQuery, usando DISTINCT ON (mesma lógica dos dados pluviométricos).
+para o BigQuery, usando GROUP BY para agregar dados dos sensores.
 
 ARQUITETURA:
     NIMBUS (alertadb) → Parquet → BigQuery
               ↑ [ESTE SCRIPT - DIRETO]
 
 QUERY UTILIZADA:
-    ✅ DISTINCT ON (l."horaLeitura", l.estacao_id)
-    ✅ ORDER BY l."horaLeitura" ASC, l.estacao_id ASC, l.id DESC
-    ✅ Garante apenas um registro por (data_hora, estacao_id) - o mais recente
-    ✅ Usa subquery com ROW_NUMBER para pivotar dados de sensores
+    ✅ GROUP BY (l."horaLeitura", l.estacao_id, e.nome)
+    ✅ ORDER BY l."horaLeitura"
+    ✅ Agrega dados dos sensores usando MAX(CASE WHEN...)
+    ✅ Query simplificada sem CTE ou DISTINCT ON
 
 VANTAGENS:
     ✅ Mais rápido (menos camadas)
@@ -33,7 +33,7 @@ VANTAGENS:
 ═══════════════════════════════════════════════════════════════════════════
 
 ✅ Conecta diretamente ao banco NIMBUS (alertadb)
-✅ Busca TODOS os dados meteorológicos usando DISTINCT ON
+✅ Busca TODOS os dados meteorológicos usando GROUP BY
 ✅ Exporta para formato Parquet completo
 ✅ Carrega no BigQuery automaticamente
 ✅ Cria/atualiza tabela no BigQuery
@@ -62,6 +62,8 @@ Variáveis opcionais:
 import psycopg2
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
+from urllib.parse import quote_plus
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
@@ -69,6 +71,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from pathlib import Path
 import tempfile
+import time
 
 # Carregar variáveis de ambiente
 project_root = Path(__file__).parent.parent.parent
@@ -166,60 +169,63 @@ def testar_conexao_nimbus():
         print(f"      Erro: {e}")
         return False
 
-def query_todos_dados_meteorologicos():
-    """Retorna query para buscar TODOS os dados meteorológicos disponíveis no banco NIMBUS.
+def query_dados_meteorologicos_por_periodo(data_inicio, data_fim):
+    """Retorna query para buscar dados meteorológicos em um período específico.
     
-    Usa DISTINCT ON para garantir apenas um registro por (horaLeitura, estacao_id),
-    mantendo o registro com o maior ID (mais recente), seguindo a mesma lógica
-    dos dados pluviométricos.
-    
-    A query usa uma CTE para pivotar os dados dos sensores
+    Query simplificada usando GROUP BY para agregar dados dos sensores
     (Chuva, Direção Vento, Velocidade Vento, Temperatura, Pressão, Umidade)
-    em colunas, agrupando por leitura_id. Depois usa DISTINCT ON para garantir
-    apenas uma leitura por (horaLeitura, estacao_id), pegando a mais recente.
-    
-    IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
-    e depois ordenar por leitura_id DESC para pegar o registro mais recente.
+    por (horaLeitura, estacao_id, nome_estacao).
     
     A coluna horaLeitura é TIMESTAMPTZ NOT NULL no NIMBUS, preservando o timezone original.
-    Esta é a MESMA lógica usada em query_todos_dados_pluviometricos() para garantir consistência.
+    
+    Args:
+        data_inicio: Data de início do período (formato: 'YYYY-MM-DD')
+        data_fim: Data de fim do período (formato: 'YYYY-MM-DD', exclusivo)
     """
-    return """
-WITH sensores_pivotados AS (
-    SELECT
-        l."horaLeitura" AS data_hora,
-        l.estacao_id,
-        e.nome AS nome_estacao,
-        l.id AS leitura_id,
-        MAX(CASE WHEN s.nome = 'Chuva'                 THEN ls.valor END) AS chuva,
-        MAX(CASE WHEN s.nome = 'Direção Vento'         THEN ls.valor END) AS dirVento,
-        MAX(CASE WHEN s.nome = 'Velocidade Vento'      THEN ls.valor END) AS velVento,
-        MAX(CASE WHEN s.nome = 'Temperatura do Ar'     THEN ls.valor END) AS temperatura,
-        MAX(CASE WHEN s.nome = 'Pressão Atmosférica'   THEN ls.valor END) AS pressao,
-        MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade
-    FROM public.estacoes_leiturasensor ls
-    JOIN public.estacoes_leitura l
-          ON ls.leitura_id = l.id
-    JOIN public.estacoes_sensor s
-          ON ls.sensor_id = s.id
-    JOIN public.estacoes_estacao e
-          ON e.id = l.estacao_id
-    WHERE l."horaLeitura" >= '1997-01-01'
-    GROUP BY l."horaLeitura", l.estacao_id, e.nome, l.id
-)
-SELECT DISTINCT ON (data_hora, estacao_id)
-    data_hora AS "Dia",  -- TIMESTAMPTZ NOT NULL (preserva timezone original)
-    estacao_id,
-    nome_estacao AS "Estacao",
-    chuva,
-    dirVento,
-    velVento,
-    temperatura,
-    pressao,
-    umidade
-FROM sensores_pivotados
-ORDER BY data_hora ASC, estacao_id ASC, leitura_id DESC;
+    return f"""
+SELECT
+    l."horaLeitura" AS data_hora,  -- simples e já com timezone correto
+    l.estacao_id AS id_estacao,
+    e.nome       AS nome_estacao,
+    MAX(CASE WHEN s.nome = 'Chuva'                 THEN ls.valor END) AS chuva,
+    MAX(CASE WHEN s.nome = 'Direção Vento'         THEN ls.valor END) AS dirVento,
+    MAX(CASE WHEN s.nome = 'Velocidade Vento'      THEN ls.valor END) AS velVento,
+    MAX(CASE WHEN s.nome = 'Temperatura do Ar'     THEN ls.valor END) AS temperatura,
+    MAX(CASE WHEN s.nome = 'Pressão Atmosférica'   THEN ls.valor END) AS pressao,
+    MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade
+
+FROM public.estacoes_leiturasensor ls
+JOIN public.estacoes_leitura l
+      ON ls.leitura_id = l.id
+JOIN public.estacoes_sensor s
+      ON ls.sensor_id = s.id
+JOIN public.estacoes_estacao e
+      ON e.id = l.estacao_id
+
+WHERE l."horaLeitura" >= '{data_inicio}'
+  AND l."horaLeitura" < '{data_fim}'
+
+GROUP BY
+    l."horaLeitura",
+    l.estacao_id,
+    e.nome
+
+ORDER BY l."horaLeitura";
 """
+
+def gerar_periodos_anuais():
+    """Gera lista de períodos anuais desde 1997 até o ano atual."""
+    from datetime import date
+    periodos = []
+    ano_atual = date.today().year
+    ano_inicio = 1997
+    
+    for ano in range(ano_inicio, ano_atual + 1):
+        data_inicio = f"{ano}-01-01"
+        data_fim = f"{ano + 1}-01-01"
+        periodos.append((ano, data_inicio, data_fim))
+    
+    return periodos
 
 def obter_schema_meteorologicos():
     """Retorna schema do BigQuery para tabela meteorologicos."""
@@ -376,7 +382,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     print(f"   💡 Isso pode levar alguns minutos dependendo do volume de dados...")
     
     inicio_query = datetime.now()
-    chunksize = 10000
+    chunksize = 5000  # Reduzido de 10000 para 5000 para evitar problemas de memória e conexão
     total_registros = 0
     chunk_numero = 1
     
@@ -391,7 +397,10 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     
     print(f"\n📦 Processando e carregando dados {descricao} no BigQuery...")
     print(f"   💡 Usando formato Parquet para melhor performance")
-    print(f"   💡 Query usa DISTINCT ON (mesma lógica dos dados pluviométricos)\n")
+    print(f"   💡 Query usa GROUP BY para agregar dados dos sensores")
+    print(f"   💡 Usando chunks menores para evitar problemas de memória")
+    print(f"   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade")
+    print(f"   🔄 Configurações de conexão otimizadas para queries longas\n")
     
     # Criar diretório temporário para múltiplos arquivos Parquet
     temp_dir = tempfile.mkdtemp()
@@ -399,16 +408,79 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     
     import gc
     chunks_list = []
-    batch_size = 4
+    batch_size = 2  # Reduzido de 4 para 2 para evitar problemas de memória
     batch_file_num = 1
     
-    for chunk_df in pd.read_sql(query, engine_nimbus, chunksize=chunksize):
+    # Função auxiliar para ler chunk com retry
+    def ler_chunks_com_retry(query, engine_ref, chunksize, max_retries=3):
+        """Lê chunks com retry automático em caso de erro de conexão."""
+        tentativa_global = 0
+        
+        while tentativa_global < max_retries:
+            try:
+                # Tentar criar iterator de chunks
+                chunk_iterator = pd.read_sql(query, engine_ref['engine'], chunksize=chunksize)
+                
+                # Processar cada chunk
+                for chunk_df in chunk_iterator:
+                    yield chunk_df
+                
+                # Se chegou aqui, leitura completa com sucesso
+                return
+                
+            except (psycopg2.OperationalError, psycopg2.InterfaceError,
+                    SQLAlchemyOperationalError) as e:
+                tentativa_global += 1
+                if tentativa_global < max_retries:
+                    wait_time = tentativa_global * 5
+                    print(f"      ⚠️  Erro de conexão (tentativa {tentativa_global}/{max_retries}): {str(e)[:100]}")
+                    print(f"      🔄 Reconectando em {wait_time}s...")
+                    time.sleep(wait_time)
+                    # Forçar reciclagem do pool de conexões
+                    try:
+                        engine_ref['engine'].dispose()
+                    except:
+                        pass
+                    # Recriar engine
+                    print(f"      🔄 Recriando conexão...")
+                    user_encoded = quote_plus(ORIGEM['user'])
+                    password_encoded = quote_plus(ORIGEM['password'])
+                    connection_string = (
+                        f"postgresql://{user_encoded}:{password_encoded}@"
+                        f"{ORIGEM['host']}:{ORIGEM['port']}/{ORIGEM['dbname']}"
+                    )
+                    engine_ref['engine'] = create_engine(
+                        connection_string,
+                        connect_args={
+                            'client_encoding': 'UTF8',
+                            'connect_timeout': 30,
+                            'keepalives': 1,
+                            'keepalives_idle': 30,
+                            'keepalives_interval': 10,
+                            'keepalives_count': 5,
+                            'options': '-c statement_timeout=0'
+                        },
+                        pool_pre_ping=True,
+                        pool_recycle=3600,
+                        pool_size=5,
+                        max_overflow=10
+                    )
+                else:
+                    print(f"      ❌ Falha após {max_retries} tentativas")
+                    raise
+    
+    # Usar dicionário mutável para permitir atualização do engine
+    engine_ref = {'engine': engine_nimbus}
+    
+    # Ler chunks com retry automático
+    for chunk_df in ler_chunks_com_retry(query, engine_ref, chunksize):
         print(f"   📦 Processando chunk {chunk_numero} ({len(chunk_df):,} registros)...")
         
         # Renomear colunas para corresponder ao schema BigQuery
         chunk_df = chunk_df.rename(columns={
-            'Dia': 'dia',
-            'Estacao': 'estacao'
+            'data_hora': 'dia',
+            'id_estacao': 'estacao_id',
+            'nome_estacao': 'estacao'
         })
         
         # Remover colunas auxiliares se existirem
@@ -565,6 +637,14 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         if registros_antes != registros_depois:
             print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia NULL")
         
+        # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
+        # A conversão de timezone pode criar duplicatas mesmo com GROUP BY na query
+        registros_antes_dedup = len(chunk_df)
+        chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        registros_depois_dedup = len(chunk_df)
+        if registros_antes_dedup != registros_depois_dedup:
+            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia, estacao_id)")
+        
         # IMPORTANTE: NÃO converter novamente para datetime aqui!
         # A função processar_dia_timestamp() já retorna o tipo correto (datetime sem timezone)
         # Converter novamente pode causar problemas de precisão (nanossegundos vs microssegundos)
@@ -577,6 +657,12 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         # Escrever batch em arquivo Parquet
         if len(chunks_list) >= batch_size:
             df_batch = pd.concat(chunks_list, ignore_index=True)
+            # Remover duplicatas antes de salvar (pode haver duplicatas entre chunks)
+            registros_antes_batch = len(df_batch)
+            df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            registros_depois_batch = len(df_batch)
+            if registros_antes_batch != registros_depois_batch:
+                print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
             batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
             df_batch.to_parquet(
                 batch_file, 
@@ -596,6 +682,12 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     if chunks_list:
         df_batch = pd.concat(chunks_list, ignore_index=True)
         df_batch = df_batch[df_batch['dia'].notna()]
+        # Remover duplicatas antes de salvar
+        registros_antes_final = len(df_batch)
+        df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        registros_depois_final = len(df_batch)
+        if registros_antes_final != registros_depois_final:
+            print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
         if len(df_batch) > 0:
             batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
             df_batch.to_parquet(
@@ -661,6 +753,329 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     
     return total_registros
 
+def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id, table_id, schema, query, descricao, write_truncate=False):
+    """Processa e carrega dados de um período específico no BigQuery.
+    
+    Similar a processar_e_carregar_tabela, mas permite controlar write_disposition.
+    """
+    inicio_query = datetime.now()
+    chunksize = 5000
+    total_registros = 0
+    chunk_numero = 1
+    
+    table_ref = client_bq.dataset(dataset_id).table(table_id)
+    
+    # Criar diretório temporário para múltiplos arquivos Parquet
+    temp_dir = tempfile.mkdtemp()
+    parquet_files = []
+    
+    import gc
+    chunks_list = []
+    batch_size = 2
+    batch_file_num = 1
+    
+    # Função auxiliar para ler chunk com retry
+    def ler_chunks_com_retry(query, engine_ref, chunksize, max_retries=3):
+        """Lê chunks com retry automático em caso de erro de conexão."""
+        tentativa_global = 0
+        
+        while tentativa_global < max_retries:
+            try:
+                chunk_iterator = pd.read_sql(query, engine_ref['engine'], chunksize=chunksize)
+                for chunk_df in chunk_iterator:
+                    yield chunk_df
+                return
+            except (psycopg2.OperationalError, psycopg2.InterfaceError,
+                    SQLAlchemyOperationalError) as e:
+                tentativa_global += 1
+                if tentativa_global < max_retries:
+                    wait_time = tentativa_global * 5
+                    print(f"      ⚠️  Erro de conexão (tentativa {tentativa_global}/{max_retries}): {str(e)[:100]}")
+                    print(f"      🔄 Reconectando em {wait_time}s...")
+                    time.sleep(wait_time)
+                    try:
+                        engine_ref['engine'].dispose()
+                    except:
+                        pass
+                    print(f"      🔄 Recriando conexão...")
+                    user_encoded = quote_plus(ORIGEM['user'])
+                    password_encoded = quote_plus(ORIGEM['password'])
+                    connection_string = (
+                        f"postgresql://{user_encoded}:{password_encoded}@"
+                        f"{ORIGEM['host']}:{ORIGEM['port']}/{ORIGEM['dbname']}"
+                    )
+                    engine_ref['engine'] = create_engine(
+                        connection_string,
+                        connect_args={
+                            'client_encoding': 'UTF8',
+                            'connect_timeout': 30,
+                            'keepalives': 1,
+                            'keepalives_idle': 30,
+                            'keepalives_interval': 10,
+                            'keepalives_count': 5,
+                            'options': '-c statement_timeout=0'
+                        },
+                        pool_pre_ping=True,
+                        pool_recycle=3600,
+                        pool_size=5,
+                        max_overflow=10
+                    )
+                else:
+                    print(f"      ❌ Falha após {max_retries} tentativas")
+                    raise
+    
+    engine_ref = {'engine': engine_nimbus}
+    
+    # Ler chunks com retry automático
+    for chunk_df in ler_chunks_com_retry(query, engine_ref, chunksize):
+        if chunk_df.empty:
+            continue
+        
+        # Renomear colunas
+        chunk_df = chunk_df.rename(columns={
+            'data_hora': 'dia',
+            'id_estacao': 'estacao_id',
+            'nome_estacao': 'estacao'
+        })
+        
+        # Remover colunas auxiliares
+        for col in ['TimezoneOffset', 'leitura_id']:
+            if col in chunk_df.columns:
+                chunk_df = chunk_df.drop(columns=[col])
+        
+        # Processar coluna dia (mesmas funções da função original)
+        def processar_dia_timestamp(dt):
+            if pd.isna(dt):
+                return None
+            try:
+                if isinstance(dt, str):
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                    dt_parsed = pd.Timestamp(dt)
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+                    dt_utc = dt_parsed.tz_convert('UTC')
+                    return dt_utc.tz_localize(None)
+                elif isinstance(dt_parsed, pd.Timestamp):
+                    from datetime import timezone, timedelta
+                    tz_brasil = timezone(timedelta(hours=-3))
+                    dt_com_tz = dt_parsed.tz_localize(tz_brasil)
+                    dt_utc = dt_com_tz.tz_convert('UTC')
+                    return dt_utc.tz_localize(None)
+                else:
+                    return dt_parsed
+            except Exception as e:
+                return None
+        
+        def formatar_dia_original(dt):
+            if pd.isna(dt):
+                return None
+            try:
+                if isinstance(dt, str):
+                    if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                        return dt
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                offset_str = "-0300"
+                if isinstance(dt_parsed, pd.Timestamp):
+                    if dt_parsed.tz is not None:
+                        offset = dt_parsed.tz.utcoffset(dt_parsed)
+                        if offset:
+                            total_seconds = offset.total_seconds()
+                            hours = int(total_seconds // 3600)
+                            minutes = int((abs(total_seconds) % 3600) // 60)
+                            offset_str = f"{hours:+03d}{minutes:02d}"
+                
+                timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
+                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
+                    microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
+                    timestamp_str += f".{microsec_str}"
+                else:
+                    timestamp_str += ".000"
+                
+                return f"{timestamp_str} {offset_str}"
+            except Exception:
+                return None
+        
+        def extrair_utc_offset(dt):
+            if pd.isna(dt):
+                return None
+            try:
+                if isinstance(dt, str):
+                    if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
+                        return dt[-5:]
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                offset_str = "-0300"
+                if isinstance(dt_parsed, pd.Timestamp):
+                    if dt_parsed.tz is not None:
+                        offset = dt_parsed.tz.utcoffset(dt_parsed)
+                        if offset:
+                            total_seconds = offset.total_seconds()
+                            hours = int(total_seconds // 3600)
+                            minutes = int((abs(total_seconds) % 3600) // 60)
+                            offset_str = f"{hours:+03d}{minutes:02d}"
+                
+                return offset_str
+            except Exception:
+                return None
+        
+        # Processar colunas
+        chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
+        chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
+        chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
+        
+        if 'estacao_id' in chunk_df.columns:
+            chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
+        
+        colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
+        for col in colunas_numericas:
+            if col in chunk_df.columns:
+                # Converter para float64 explicitamente
+                # Primeiro converter para numérico, depois forçar float64
+                chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce')
+                # Forçar explicitamente float64 (evita inferência como INT32 pelo pyarrow)
+                # Usar astype('float64') que garante o tipo mesmo com valores inteiros
+                chunk_df[col] = chunk_df[col].astype('float64')
+        
+        chunk_df = chunk_df[chunk_df['dia'].notna()]
+        
+        # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
+        # A conversão de timezone pode criar duplicatas mesmo com GROUP BY na query
+        registros_antes_dedup = len(chunk_df)
+        chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        registros_depois_dedup = len(chunk_df)
+        if registros_antes_dedup != registros_depois_dedup:
+            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia, estacao_id)")
+        
+        if len(chunk_df) > 0:
+            chunks_list.append(chunk_df)
+        total_registros += len(chunk_df)
+        chunk_numero += 1
+        
+        # Escrever batch em arquivo Parquet
+        if len(chunks_list) >= batch_size:
+            df_batch = pd.concat(chunks_list, ignore_index=True)
+            # Remover duplicatas antes de salvar (pode haver duplicatas entre chunks)
+            registros_antes_batch = len(df_batch)
+            df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            registros_depois_batch = len(df_batch)
+            if registros_antes_batch != registros_depois_batch:
+                print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
+            # Garantir que todas as colunas numéricas sejam float64 antes de salvar
+            for col in colunas_numericas:
+                if col in df_batch.columns:
+                    # Forçar float64 explicitamente
+                    df_batch[col] = df_batch[col].astype('float64')
+            batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
+            # Usar schema explícito do pyarrow para garantir tipos corretos (float64)
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+            table = pa.Table.from_pandas(df_batch)
+            # Garantir que colunas numéricas sejam double (float64) preservando nomes exatos
+            schema = table.schema
+            new_fields = []
+            for field in schema:
+                if field.name in colunas_numericas:
+                    # Forçar tipo double (float64) preservando o nome exato da coluna
+                    new_fields.append(pa.field(field.name, pa.float64(), nullable=True))
+                else:
+                    new_fields.append(field)
+            new_schema = pa.schema(new_fields)
+            table = table.cast(new_schema)
+            pq.write_table(table, batch_file, compression='snappy', coerce_timestamps='us', use_deprecated_int96_timestamps=False)
+            parquet_files.append(batch_file)
+            chunks_list.clear()
+            del df_batch
+            gc.collect()
+            batch_file_num += 1
+    
+    # Escrever chunks restantes
+    if chunks_list:
+        df_batch = pd.concat(chunks_list, ignore_index=True)
+        df_batch = df_batch[df_batch['dia'].notna()]
+        # Remover duplicatas antes de salvar
+        registros_antes_final = len(df_batch)
+        df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        registros_depois_final = len(df_batch)
+        if registros_antes_final != registros_depois_final:
+            print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
+        if len(df_batch) > 0:
+            # Garantir que todas as colunas numéricas sejam float64 antes de salvar
+            colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
+            for col in colunas_numericas:
+                if col in df_batch.columns:
+                    df_batch[col] = df_batch[col].astype('float64')
+            batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
+            # Usar schema explícito do pyarrow para garantir tipos corretos (float64)
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+            table = pa.Table.from_pandas(df_batch)
+            # Garantir que colunas numéricas sejam double (float64) preservando nomes exatos
+            schema = table.schema
+            new_fields = []
+            for field in schema:
+                if field.name in colunas_numericas:
+                    # Forçar tipo double (float64) preservando o nome exato da coluna
+                    new_fields.append(pa.field(field.name, pa.float64(), nullable=True))
+                else:
+                    new_fields.append(field)
+            new_schema = pa.schema(new_fields)
+            table = table.cast(new_schema)
+            pq.write_table(table, batch_file, compression='snappy', coerce_timestamps='us', use_deprecated_int96_timestamps=False)
+            parquet_files.append(batch_file)
+            del df_batch
+            gc.collect()
+    
+    if total_registros == 0:
+        return 0
+    
+    # Carregar arquivos Parquet no BigQuery
+    inicio_carga = datetime.now()
+    
+    for i, parquet_file in enumerate(parquet_files, 1):
+        # Para arquivos Parquet, o BigQuery pode inferir o schema automaticamente
+        # Não especificar schema - o BigQuery usa o schema da tabela existente ou infere do Parquet
+        file_job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE if (write_truncate and i == 1) else bigquery.WriteDisposition.WRITE_APPEND,
+            source_format=bigquery.SourceFormat.PARQUET,
+        )
+        
+        with open(parquet_file, 'rb') as source_file:
+            job = client_bq.load_table_from_file(
+                source_file,
+                table_ref,
+                job_config=file_job_config
+            )
+            job.result()
+    
+    tempo_carga = (datetime.now() - inicio_carga).total_seconds()
+    
+    # Limpar arquivos temporários
+    for parquet_file in parquet_files:
+        try:
+            parquet_file.unlink()
+        except Exception:
+            pass
+    try:
+        os.rmdir(temp_dir)
+    except Exception:
+        pass
+    
+    return total_registros
+
 def exportar_para_bigquery():
     """Exporta dados meteorológicos do NIMBUS diretamente para BigQuery."""
     engine_nimbus = None
@@ -674,14 +1089,28 @@ def exportar_para_bigquery():
         
         # Conectar ao NIMBUS
         print("📦 Conectando ao NIMBUS...")
+        print("   🔄 Configurações otimizadas para queries longas (keepalives, timeout estendido)")
+        user_encoded = quote_plus(ORIGEM['user'])
+        password_encoded = quote_plus(ORIGEM['password'])
         connection_string = (
-            f"postgresql://{ORIGEM['user']}:{ORIGEM['password']}@"
+            f"postgresql://{user_encoded}:{password_encoded}@"
             f"{ORIGEM['host']}:{ORIGEM['port']}/{ORIGEM['dbname']}"
         )
         engine_nimbus = create_engine(
             connection_string,
-            connect_args={'client_encoding': 'UTF8'},
-            pool_pre_ping=True
+            connect_args={
+                'client_encoding': 'UTF8',
+                'connect_timeout': 30,
+                'keepalives': 1,
+                'keepalives_idle': 30,
+                'keepalives_interval': 10,
+                'keepalives_count': 5,
+                'options': '-c statement_timeout=0'  # Desabilita timeout de statement
+            },
+            pool_pre_ping=True,
+            pool_recycle=3600,
+            pool_size=5,
+            max_overflow=10
         )
         
         # Conectar ao BigQuery
@@ -727,27 +1156,48 @@ def exportar_para_bigquery():
             schema_meteorologicos
         )
         
-        # Processar tabela meteorologicos
+        # Processar tabela meteorologicos por períodos anuais
         print("\n" + "=" * 80)
         print("🌤️ PROCESSANDO TABELA: meteorologicos")
         print("=" * 80)
+        print("   💡 Processando por períodos anuais para evitar timeout do servidor")
+        print("   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade")
         
-        query_meteorologicos = query_todos_dados_meteorologicos()
-        total_meteorologicos = processar_e_carregar_tabela(
-            engine_nimbus=engine_nimbus,
-            client_bq=client_bq,
-            dataset_id=BIGQUERY_CONFIG['dataset_id'],
-            table_id=BIGQUERY_CONFIG['table_id'],
-            schema=schema_meteorologicos,
-            query=query_meteorologicos,
-            descricao="meteorológicos"
-        )
+        periodos = gerar_periodos_anuais()
+        total_meteorologicos = 0
+        total_periodos = len(periodos)
+        
+        # Configurar write_disposition apenas no primeiro período (WRITE_TRUNCATE)
+        # Depois usar WRITE_APPEND
+        table_ref = client_bq.dataset(BIGQUERY_CONFIG['dataset_id']).table(BIGQUERY_CONFIG['table_id'])
+        
+        for idx, (ano, data_inicio, data_fim) in enumerate(periodos, 1):
+            print(f"\n📅 Processando ano {ano} ({idx}/{total_periodos})...")
+            print(f"   Período: {data_inicio} até {data_fim}")
+            
+            query_periodo = query_dados_meteorologicos_por_periodo(data_inicio, data_fim)
+            
+            # Processar período
+            registros_periodo = processar_e_carregar_tabela_por_periodo(
+                engine_nimbus=engine_nimbus,
+                client_bq=client_bq,
+                dataset_id=BIGQUERY_CONFIG['dataset_id'],
+                table_id=BIGQUERY_CONFIG['table_id'],
+                schema=schema_meteorologicos,
+                query=query_periodo,
+                descricao=f"meteorológicos ({ano})",
+                write_truncate=(idx == 1)  # Apenas no primeiro período
+            )
+            
+            total_meteorologicos += registros_periodo
+            print(f"   ✅ Ano {ano} processado: {registros_periodo:,} registros")
         
         # Resumo final
         print("\n" + "=" * 80)
         print("✅ EXPORTAÇÃO CONCLUÍDA")
         print("=" * 80)
-        print(f"🌤️ meteorologicos: {total_meteorologicos:,} registros")
+        print(f"🌤️ meteorologicos: {total_meteorologicos:,} registros totais")
+        print(f"   Processados {total_periodos} períodos anuais")
         
         return total_meteorologicos
 
@@ -773,7 +1223,7 @@ def main():
     print()
     print("📋 O QUE SERÁ FEITO:")
     print("   ✅ Buscar TODOS os dados meteorológicos do NIMBUS (desde 1997)")
-    print("   ✅ Usar DISTINCT ON (mesma lógica dos dados pluviométricos)")
+    print("   ✅ Usar GROUP BY para agregar dados dos sensores")
     print("   ✅ Criar dataset/tabela no BigQuery se não existir")
     print("   ✅ Exportar em formato Parquet completo")
     print("   ✅ Carregar no BigQuery automaticamente")
@@ -782,7 +1232,7 @@ def main():
     print("   - Requer credenciais do GCP configuradas")
     print("   - Formato: Parquet (mais eficiente para BigQuery)")
     print("   - Exportação completa: todos os dados")
-    print("   - Query usa DISTINCT ON para garantir unicidade")
+    print("   - Query usa GROUP BY para agregar dados dos sensores")
     print("=" * 70)
     
     # Testar conexão
