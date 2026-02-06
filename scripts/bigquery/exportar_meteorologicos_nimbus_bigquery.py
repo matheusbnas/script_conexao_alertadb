@@ -38,9 +38,9 @@ VANTAGENS:
 ✅ Carrega no BigQuery automaticamente
 ✅ Cria/atualiza tabela no BigQuery
 ✅ Processa em lotes de 10.000 registros para otimizar memória
-✅ Usa TIMESTAMP para coluna dia (igual aos pluviométricos)
+✅ Usa TIMESTAMP para coluna dia_utc (UTC; igual convenção aos pluviométricos que usam dia em SP)
 ✅ Converte timezone para UTC (padrão BigQuery)
-✅ Particionamento por coluna dia (melhora performance)
+✅ Particionamento por coluna dia_utc (melhora performance)
 
 ═══════════════════════════════════════════════════════════════════════════
 📋 CONFIGURAÇÃO:
@@ -230,7 +230,7 @@ def gerar_periodos_anuais():
 def obter_schema_meteorologicos():
     """Retorna schema do BigQuery para tabela meteorologicos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do NIMBUS (preserva timezone original). Armazenado em UTC no BigQuery."),
+        bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ NOT NULL do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso horário."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
         bigquery.SchemaField("estacao", "STRING", mode="NULLABLE", description="Nome da estação meteorológica"),
@@ -276,7 +276,7 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
                     table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                     table.time_partitioning = bigquery.TimePartitioning(
                         type_=bigquery.TimePartitioningType.MONTH,
-                        field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+                        field="dia_utc"  # Particionamento por coluna dia_utc (TIMESTAMP) - agrupado por MÊS
                     )
                     table = client.create_table(table)
                     print(f"✅ Tabela '{table_id}' recriada com schema e particionamento!")
@@ -287,29 +287,29 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
                     table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                     table.time_partitioning = bigquery.TimePartitioning(
                         type_=bigquery.TimePartitioningType.MONTH,
-                        field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+                        field="dia_utc"  # Particionamento por coluna dia_utc (TIMESTAMP) - agrupado por MÊS
                     )
                     table = client.create_table(table)
                     print(f"✅ Tabela '{table_id}' recriada com schema e particionamento!")
                 return True
             else:
                 # Verificar se já tem particionamento
-                # Verificar se o particionamento está correto (por coluna dia, tipo MONTH)
+                # Verificar se o particionamento está correto (por coluna dia_utc, tipo MONTH)
                 if table.time_partitioning and table.time_partitioning.field:
                     # Verificar se está usando DAY (precisa mudar para MONTH) ou se já está MONTH
-                    if table.time_partitioning.field != "dia":
+                    if table.time_partitioning.field != "dia_utc":
                         print(f"   ⚠️  Tabela '{table_id}' existe com particionamento por campo '{table.time_partitioning.field}'.")
-                        print(f"   💡 Precisamos recriar a tabela com particionamento por 'dia' (MÊS).")
+                        print(f"   💡 Precisamos recriar a tabela com particionamento por 'dia_utc' (MÊS).")
                         print(f"   🔄 Deletando tabela para recriar com particionamento correto...")
                         client.delete_table(table_ref)
                         table = bigquery.Table(table_ref, schema=schema)
                         table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                         table.time_partitioning = bigquery.TimePartitioning(
                             type_=bigquery.TimePartitioningType.MONTH,
-                            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+                            field="dia_utc"  # Particionamento por coluna dia_utc (TIMESTAMP) - agrupado por MÊS
                         )
                         table = client.create_table(table)
-                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia' (MÊS)!")
+                        print(f"✅ Tabela '{table_id}' recriada com particionamento por coluna 'dia_utc' (MÊS)!")
                     elif table.time_partitioning.type_ != bigquery.TimePartitioningType.MONTH:
                         # Tabela tem particionamento por DIA, mas precisa ser MONTH
                         print(f"   ⚠️  Tabela '{table_id}' existe com particionamento por DIA.")
@@ -321,12 +321,12 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
                         table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                         table.time_partitioning = bigquery.TimePartitioning(
                             type_=bigquery.TimePartitioningType.MONTH,
-                            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+                            field="dia_utc"  # Particionamento por coluna dia_utc (TIMESTAMP) - agrupado por MÊS
                         )
                         table = client.create_table(table)
                         print(f"✅ Tabela '{table_id}' recriada com particionamento por MÊS!")
                     else:
-                        print(f"✅ Tabela '{table_id}' já existe com particionamento por coluna 'dia' (MÊS)!")
+                        print(f"✅ Tabela '{table_id}' já existe com particionamento por coluna 'dia_utc' (MÊS)!")
                 elif not table.time_partitioning:
                     if table.num_rows == 0:
                         print(f"   📋 Tabela existe mas sem particionamento e está vazia.")
@@ -336,7 +336,7 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
                         table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
                         table.time_partitioning = bigquery.TimePartitioning(
                             type_=bigquery.TimePartitioningType.MONTH,
-                            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+                            field="dia_utc"  # Particionamento por coluna dia_utc (TIMESTAMP) - agrupado por MÊS
                         )
                         table = client.create_table(table)
                         print(f"✅ Tabela '{table_id}' recriada com particionamento por MÊS!")
@@ -359,12 +359,12 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
         # Criar tabela com schema e particionamento
         table = bigquery.Table(table_ref, schema=schema)
         table.description = "Dados meteorológicos do NIMBUS (desde 1997)"
-        # Como dia é TIMESTAMP, usar particionamento por MÊS para evitar exceder limite de 10.000 partições
+        # Como dia_utc é TIMESTAMP, usar particionamento por MÊS para evitar exceder limite de 10.000 partições
         # Com dados desde 1997, particionamento por DIA excederia o limite (mais de 10.000 dias)
         # Particionamento por MÊS reduz para ~340 partições (desde 1997 até hoje)
         table.time_partitioning = bigquery.TimePartitioning(
             type_=bigquery.TimePartitioningType.MONTH,
-            field="dia"  # Particionamento por coluna dia (TIMESTAMP) - agrupado por MÊS
+            field="dia_utc"  # Particionamento por coluna dia_utc (TIMESTAMP) - agrupado por MÊS
         )
         table = client.create_table(table, exists_ok=False)
         print(f"✅ Tabela '{table_id}' criada com schema e particionamento por MÊS no BigQuery!")
@@ -399,7 +399,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     print(f"   💡 Usando formato Parquet para melhor performance")
     print(f"   💡 Query usa GROUP BY para agregar dados dos sensores")
     print(f"   💡 Usando chunks menores para evitar problemas de memória")
-    print(f"   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade")
+    print(f"   💡 Removendo duplicatas por (dia_utc, estacao_id) para garantir unicidade")
     print(f"   🔄 Configurações de conexão otimizadas para queries longas\n")
     
     # Criar diretório temporário para múltiplos arquivos Parquet
@@ -478,7 +478,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         
         # Renomear colunas para corresponder ao schema BigQuery
         chunk_df = chunk_df.rename(columns={
-            'data_hora': 'dia',
+            'data_hora': 'dia_utc',
             'id_estacao': 'estacao_id',
             'nome_estacao': 'estacao'
         })
@@ -489,7 +489,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             if col in chunk_df.columns:
                 chunk_df = chunk_df.drop(columns=[col])
         
-        # Processar coluna dia: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
+        # Processar coluna dia_utc: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
         def processar_dia_timestamp(dt):
             """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC).
             
@@ -616,10 +616,10 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             except Exception:
                 return None
         
-        # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
-        chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
-        chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
-        chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
+        # Processar todas as colunas: dia_utc (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+            chunk_df['dia_original'] = chunk_df['dia_utc'].apply(formatar_dia_original)
+            chunk_df['utc_offset'] = chunk_df['dia_utc'].apply(extrair_utc_offset)
+            chunk_df['dia_utc'] = chunk_df['dia_utc'].apply(processar_dia_timestamp)
         
         if 'estacao_id' in chunk_df.columns:
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
@@ -630,20 +630,20 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             if col in chunk_df.columns:
                 chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
         
-        # Filtrar registros com dia NULL
+        # Filtrar registros com dia_utc NULL
         registros_antes = len(chunk_df)
-        chunk_df = chunk_df[chunk_df['dia'].notna()]
+        chunk_df = chunk_df[chunk_df['dia_utc'].notna()]
         registros_depois = len(chunk_df)
         if registros_antes != registros_depois:
-            print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia NULL")
+            print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia_utc NULL")
         
-        # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
+        # IMPORTANTE: Remover duplicatas baseado em (dia_utc, estacao_id)
         # A conversão de timezone pode criar duplicatas mesmo com GROUP BY na query
         registros_antes_dedup = len(chunk_df)
-        chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        chunk_df = chunk_df.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
         registros_depois_dedup = len(chunk_df)
         if registros_antes_dedup != registros_depois_dedup:
-            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia, estacao_id)")
+            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia_utc, estacao_id)")
         
         # IMPORTANTE: NÃO converter novamente para datetime aqui!
         # A função processar_dia_timestamp() já retorna o tipo correto (datetime sem timezone)
@@ -659,7 +659,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             df_batch = pd.concat(chunks_list, ignore_index=True)
             # Remover duplicatas antes de salvar (pode haver duplicatas entre chunks)
             registros_antes_batch = len(df_batch)
-            df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            df_batch = df_batch.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
             registros_depois_batch = len(df_batch)
             if registros_antes_batch != registros_depois_batch:
                 print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
@@ -681,10 +681,10 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
     # Escrever chunks restantes
     if chunks_list:
         df_batch = pd.concat(chunks_list, ignore_index=True)
-        df_batch = df_batch[df_batch['dia'].notna()]
+        df_batch = df_batch[df_batch['dia_utc'].notna()]
         # Remover duplicatas antes de salvar
         registros_antes_final = len(df_batch)
-        df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        df_batch = df_batch.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
         registros_depois_final = len(df_batch)
         if registros_antes_final != registros_depois_final:
             print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
@@ -833,7 +833,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
         
         # Renomear colunas
         chunk_df = chunk_df.rename(columns={
-            'data_hora': 'dia',
+            'data_hora': 'dia_utc',
             'id_estacao': 'estacao_id',
             'nome_estacao': 'estacao'
         })
@@ -843,7 +843,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
             if col in chunk_df.columns:
                 chunk_df = chunk_df.drop(columns=[col])
         
-        # Processar coluna dia (mesmas funções da função original)
+        # Processar coluna dia_utc (mesmas funções da função original)
         def processar_dia_timestamp(dt):
             if pd.isna(dt):
                 return None
@@ -933,9 +933,9 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
                 return None
         
         # Processar colunas
-        chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
-        chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
-        chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
+        chunk_df['dia_original'] = chunk_df['dia_utc'].apply(formatar_dia_original)
+        chunk_df['utc_offset'] = chunk_df['dia_utc'].apply(extrair_utc_offset)
+        chunk_df['dia_utc'] = chunk_df['dia_utc'].apply(processar_dia_timestamp)
         
         if 'estacao_id' in chunk_df.columns:
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
@@ -950,15 +950,15 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
                 # Usar astype('float64') que garante o tipo mesmo com valores inteiros
                 chunk_df[col] = chunk_df[col].astype('float64')
         
-        chunk_df = chunk_df[chunk_df['dia'].notna()]
+        chunk_df = chunk_df[chunk_df['dia_utc'].notna()]
         
-        # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
+        # IMPORTANTE: Remover duplicatas baseado em (dia_utc, estacao_id)
         # A conversão de timezone pode criar duplicatas mesmo com GROUP BY na query
         registros_antes_dedup = len(chunk_df)
-        chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        chunk_df = chunk_df.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
         registros_depois_dedup = len(chunk_df)
         if registros_antes_dedup != registros_depois_dedup:
-            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia, estacao_id)")
+            print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia_utc, estacao_id)")
         
         if len(chunk_df) > 0:
             chunks_list.append(chunk_df)
@@ -970,7 +970,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
             df_batch = pd.concat(chunks_list, ignore_index=True)
             # Remover duplicatas antes de salvar (pode haver duplicatas entre chunks)
             registros_antes_batch = len(df_batch)
-            df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            df_batch = df_batch.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
             registros_depois_batch = len(df_batch)
             if registros_antes_batch != registros_depois_batch:
                 print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
@@ -1005,10 +1005,10 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
     # Escrever chunks restantes
     if chunks_list:
         df_batch = pd.concat(chunks_list, ignore_index=True)
-        df_batch = df_batch[df_batch['dia'].notna()]
+        df_batch = df_batch[df_batch['dia_utc'].notna()]
         # Remover duplicatas antes de salvar
         registros_antes_final = len(df_batch)
-        df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+        df_batch = df_batch.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
         registros_depois_final = len(df_batch)
         if registros_antes_final != registros_depois_final:
             print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
@@ -1161,7 +1161,7 @@ def exportar_para_bigquery():
         print("🌤️ PROCESSANDO TABELA: meteorologicos")
         print("=" * 80)
         print("   💡 Processando por períodos anuais para evitar timeout do servidor")
-        print("   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade")
+        print("   💡 Removendo duplicatas por (dia_utc, estacao_id) para garantir unicidade")
         
         periodos = gerar_periodos_anuais()
         total_meteorologicos = 0

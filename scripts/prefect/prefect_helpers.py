@@ -190,13 +190,14 @@ def verificar_status_bigquery_tabela(credentials_path: Path, dataset_id: str, ta
             from prefect_gcp.bigquery import BigQueryWarehouse
             
             gcp_credentials = GcpCredentials(service_account_file=str(credentials_path))
-            
+            # Ambas as tabelas usam coluna dia_utc (UTC)
+            coluna_data = "dia_utc"
             with BigQueryWarehouse(gcp_credentials=gcp_credentials) as warehouse:
                 query = f"""
                 SELECT 
                     COUNT(*) as total_registros,
-                    MIN(dia) as data_minima,
-                    MAX(dia) as data_maxima,
+                    MIN({coluna_data}) as data_minima,
+                    MAX({coluna_data}) as data_maxima,
                     COUNT(DISTINCT estacao_id) as total_estacoes
                 FROM `{dataset_id}.{table_id}`
                 """

@@ -85,7 +85,7 @@ def verificar_lacunas_dados() -> dict:
         
         # Obter última sincronização do BigQuery
         query_bq = """
-        SELECT MAX(dia) as ultima_sincronizacao
+        SELECT MAX(dia_utc) as ultima_sincronizacao
         FROM `alertadb_cor_raw.pluviometricos`
         """
         query_job = client_bq.query(query_bq)
@@ -96,11 +96,11 @@ def verificar_lacunas_dados() -> dict:
             if row.ultima_sincronizacao:
                 ultima_sync = row.ultima_sincronizacao
                 if isinstance(ultima_sync, datetime):
-                    # Converter para UTC se necessário
+                    # dia_utc está em UTC no BigQuery
                     if ultima_sync.tzinfo is None:
-                        tz_sp = pytz.timezone('America/Sao_Paulo')
-                        dt_sp = tz_sp.localize(ultima_sync)
-                        ultima_sync = dt_sp.astimezone(timezone.utc)
+                        ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
+                    elif ultima_sync.tzinfo != timezone.utc:
+                        ultima_sync = ultima_sync.astimezone(timezone.utc)
                     break
         
         if not ultima_sync:
@@ -110,12 +110,10 @@ def verificar_lacunas_dados() -> dict:
                 'lacunas_detectadas': False
             }
         
-        # Converter para UTC se necessário
+        # Garantir que está em UTC (dia_utc já vem em UTC do BigQuery)
         if isinstance(ultima_sync, datetime):
             if ultima_sync.tzinfo is None:
-                tz_sp = pytz.timezone('America/Sao_Paulo')
-                dt_sp = tz_sp.localize(ultima_sync)
-                ultima_sync = dt_sp.astimezone(timezone.utc)
+                ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
             elif ultima_sync.tzinfo != timezone.utc:
                 ultima_sync = ultima_sync.astimezone(timezone.utc)
         

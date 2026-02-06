@@ -85,7 +85,7 @@ def verificar_lacunas_dados_meteorologicos() -> dict:
         
         # Obter última sincronização do BigQuery
         query_bq = """
-        SELECT MAX(dia) as ultima_sincronizacao
+        SELECT MAX(dia_utc) as ultima_sincronizacao
         FROM `alertadb_cor_raw.meteorologicos`
         """
         query_job = client_bq.query(query_bq)
@@ -96,11 +96,14 @@ def verificar_lacunas_dados_meteorologicos() -> dict:
             if row.ultima_sincronizacao:
                 ultima_sync = row.ultima_sincronizacao
                 if isinstance(ultima_sync, datetime):
-                    # Converter para UTC se necessário
+                    # IMPORTANTE: Para meteorológicos, o campo dia_utc está salvo em UTC no BigQuery
+                    # O BigQuery retorna sem timezone, mas o valor corresponde a UTC
                     if ultima_sync.tzinfo is None:
-                        tz_sp = pytz.timezone('America/Sao_Paulo')
-                        dt_sp = tz_sp.localize(ultima_sync)
-                        ultima_sync = dt_sp.astimezone(timezone.utc)
+                        # Assumir que está em UTC (como no script de sincronização)
+                        ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
+                    elif ultima_sync.tzinfo != timezone.utc:
+                        # Se já tem timezone, converter para UTC
+                        ultima_sync = ultima_sync.astimezone(timezone.utc)
                     break
         
         if not ultima_sync:
@@ -110,12 +113,10 @@ def verificar_lacunas_dados_meteorologicos() -> dict:
                 'lacunas_detectadas': False
             }
         
-        # Converter para UTC se necessário
+        # Garantir que está em UTC
         if isinstance(ultima_sync, datetime):
             if ultima_sync.tzinfo is None:
-                tz_sp = pytz.timezone('America/Sao_Paulo')
-                dt_sp = tz_sp.localize(ultima_sync)
-                ultima_sync = dt_sp.astimezone(timezone.utc)
+                ultima_sync = ultima_sync.replace(tzinfo=timezone.utc)
             elif ultima_sync.tzinfo != timezone.utc:
                 ultima_sync = ultima_sync.astimezone(timezone.utc)
         

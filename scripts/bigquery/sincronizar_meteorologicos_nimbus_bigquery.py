@@ -34,7 +34,7 @@ VANTAGENS:
 📋 O QUE ESTE SCRIPT FAZ:
 ═══════════════════════════════════════════════════════════════════════════
 
-✅ Busca último timestamp no BigQuery (MAX(dia)) por estação
+✅ Busca último timestamp no BigQuery (MAX(dia_utc)) por estação
 ✅ Busca APENAS dados novos desde esses timestamps no NIMBUS
 ✅ Exporta para formato Parquet (mesma estrutura do script de exportação)
 ✅ Carrega no BigQuery usando WRITE_APPEND
@@ -163,12 +163,12 @@ def testar_conexao_nimbus():
 def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
     """Obtém o último timestamp sincronizado do BigQuery (TIMESTAMP).
     
-    IMPORTANTE: O campo dia está salvo em UTC no BigQuery.
+    IMPORTANTE: O campo dia_utc está salvo em UTC no BigQuery.
     O BigQuery retorna sem timezone, mas o valor corresponde a UTC.
     """
     try:
         query = f"""
-        SELECT MAX(dia) as ultima_sincronizacao
+        SELECT MAX(dia_utc) as ultima_sincronizacao
         FROM `{client.project}.{dataset_id}.{table_id}`
         """
         query_job = client.query(query)
@@ -201,7 +201,7 @@ def obter_ultima_sincronizacao_por_estacao(client, dataset_id, table_id):
         query = f"""
         SELECT 
             estacao_id,
-            MAX(dia) as ultima_sincronizacao
+            MAX(dia_utc) as ultima_sincronizacao
         FROM `{client.project}.{dataset_id}.{table_id}`
         GROUP BY estacao_id
         """
@@ -308,7 +308,7 @@ ORDER BY l."horaLeitura";
 def obter_schema_meteorologicos():
     """Retorna schema do BigQuery para tabela meteorologicos."""
     return [
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="REQUIRED", description="Data e hora em que foi realizada a medição. Origem: TIMESTAMPTZ NOT NULL do NIMBUS (preserva timezone original). Armazenado em UTC no BigQuery."),
+        bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ NOT NULL do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso horário."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
         bigquery.SchemaField("estacao", "STRING", mode="NULLABLE", description="Nome da estação meteorológica"),
@@ -448,7 +448,7 @@ def sincronizar_incremental():
         print(f"\n📦 Processando e carregando dados incrementais no BigQuery...")
         print(f"   💡 Usando formato Parquet para melhor performance")
         print(f"   💡 Query usa GROUP BY para agregar dados dos sensores")
-        print(f"   💡 Removendo duplicatas por (dia, estacao_id) para garantir unicidade\n")
+        print(f"   💡 Removendo duplicatas por (dia_utc, estacao_id) para garantir unicidade\n")
         
         temp_dir = tempfile.mkdtemp()
         parquet_files = []
@@ -462,7 +462,7 @@ def sincronizar_incremental():
             
             # Renomear colunas
             chunk_df = chunk_df.rename(columns={
-                'data_hora': 'dia',
+                'data_hora': 'dia_utc',
                 'id_estacao': 'estacao_id',
                 'nome_estacao': 'estacao'
             })
@@ -473,7 +473,7 @@ def sincronizar_incremental():
                 if col in chunk_df.columns:
                     chunk_df = chunk_df.drop(columns=[col])
             
-            # Processar coluna dia: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
+            # Processar coluna dia_utc: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
             def processar_dia_timestamp(dt):
                 """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC)."""
                 if pd.isna(dt):
@@ -566,10 +566,10 @@ def sincronizar_incremental():
                 except Exception:
                     return None
             
-            # Processar todas as colunas: dia (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
-            chunk_df['dia_original'] = chunk_df['dia'].apply(formatar_dia_original)
-            chunk_df['utc_offset'] = chunk_df['dia'].apply(extrair_utc_offset)
-            chunk_df['dia'] = chunk_df['dia'].apply(processar_dia_timestamp)
+            # Processar todas as colunas: dia_utc (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+            chunk_df['dia_original'] = chunk_df['dia_utc'].apply(formatar_dia_original)
+            chunk_df['utc_offset'] = chunk_df['dia_utc'].apply(extrair_utc_offset)
+            chunk_df['dia_utc'] = chunk_df['dia_utc'].apply(processar_dia_timestamp)
             
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
@@ -583,20 +583,20 @@ def sincronizar_incremental():
                     chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce')
                     # Não forçar float64 - manter tipo original (pode ser int64 ou float64)
             
-            # Filtrar registros com dia NULL
+            # Filtrar registros com dia_utc NULL
             registros_antes = len(chunk_df)
-            chunk_df = chunk_df[chunk_df['dia'].notna()]
+            chunk_df = chunk_df[chunk_df['dia_utc'].notna()]
             registros_depois = len(chunk_df)
             if registros_antes != registros_depois:
-                print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia NULL")
+                print(f"      ⚠️  Removidos {registros_antes - registros_depois} registros com dia_utc NULL")
             
-            # IMPORTANTE: Remover duplicatas baseado em (dia, estacao_id)
+            # IMPORTANTE: Remover duplicatas baseado em (dia_utc, estacao_id)
             # A conversão de timezone pode criar duplicatas mesmo com GROUP BY na query
             registros_antes_dedup = len(chunk_df)
-            chunk_df = chunk_df.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            chunk_df = chunk_df.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
             registros_depois_dedup = len(chunk_df)
             if registros_antes_dedup != registros_depois_dedup:
-                print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia, estacao_id)")
+                print(f"      ⚠️  Removidas {registros_antes_dedup - registros_depois_dedup} duplicatas (dia_utc, estacao_id)")
             
             if len(chunk_df) > 0:
                 chunks_list.append(chunk_df)
@@ -608,7 +608,7 @@ def sincronizar_incremental():
                 df_batch = pd.concat(chunks_list, ignore_index=True)
                 # Remover duplicatas antes de salvar (pode haver duplicatas entre chunks)
                 registros_antes_batch = len(df_batch)
-                df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+                df_batch = df_batch.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
                 registros_depois_batch = len(df_batch)
                 if registros_antes_batch != registros_depois_batch:
                     print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
@@ -630,10 +630,10 @@ def sincronizar_incremental():
         # Escrever chunks restantes
         if chunks_list:
             df_batch = pd.concat(chunks_list, ignore_index=True)
-            df_batch = df_batch[df_batch['dia'].notna()]
+            df_batch = df_batch[df_batch['dia_utc'].notna()]
             # Remover duplicatas antes de salvar
             registros_antes_final = len(df_batch)
-            df_batch = df_batch.drop_duplicates(subset=['dia', 'estacao_id'], keep='last')
+            df_batch = df_batch.drop_duplicates(subset=['dia_utc', 'estacao_id'], keep='last')
             registros_depois_final = len(df_batch)
             if registros_antes_final != registros_depois_final:
                 print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")

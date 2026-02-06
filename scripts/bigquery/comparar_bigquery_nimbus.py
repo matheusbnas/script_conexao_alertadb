@@ -67,7 +67,7 @@ def query_bigquery():
     """Query no BigQuery"""
     return f"""
 SELECT 
-    dia,
+    dia_utc,
     m05,
     m10,
     m15,
@@ -78,10 +78,10 @@ SELECT
     estacao,
     estacao_id
 FROM `{BIGQUERY_PROJECT_ID}.{BIGQUERY_DATASET_ID}.{BIGQUERY_TABLE_ID}`
-WHERE dia >= '2009-02-15 22:00:00.000' 
-  AND dia <= '2009-02-18 01:00:00.000' 
+WHERE dia_utc >= '2009-02-15 22:00:00.000' 
+  AND dia_utc <= '2009-02-18 01:00:00.000' 
   AND estacao_id = 14
-ORDER BY dia DESC;
+ORDER BY dia_utc DESC;
 """
 
 def comparar_dados():
@@ -158,7 +158,7 @@ def comparar_dados():
     
     # Normalizar timestamps
     df_nimbus['dia_normalizado'] = df_nimbus['Dia'].apply(normalizar_timestamp_nimbus)
-    df_bigquery['dia_normalizado'] = df_bigquery['dia'].apply(normalizar_timestamp_bigquery)
+    df_bigquery['dia_normalizado'] = df_bigquery['dia_utc'].apply(normalizar_timestamp_bigquery)
     
     # Criar dicionários para comparação usando timestamps normalizados
     dict_nimbus = {row['dia_normalizado']: row for _, row in df_nimbus.iterrows() if row['dia_normalizado']}
