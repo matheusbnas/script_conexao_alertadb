@@ -13,13 +13,18 @@ Tabelas:
 """
 
 import os
+import sys
+# Com --run-once: usar API efêmera para não contactar Prefect Cloud (evita 401)
+if '--run-once' in sys.argv:
+    os.environ["PREFECT_API_URL"] = ""
+    os.environ["PREFECT_SERVER_ALLOW_EPHEMERAL_MODE"] = "true"
 # Configuração Prefect: Use Cloud ou Local
 # os.environ["PREFECT_API_URL"] = "http://127.0.0.1:4200/api"  # Descomente para Prefect Local
 
 from prefect import flow, task
+from prefect.exceptions import PrefectHTTPStatusError
 from pathlib import Path
 from datetime import datetime
-import sys
 
 # Adicionar diretório atual ao path para imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -205,10 +210,19 @@ if __name__ == "__main__":
         print("🔄 Executando sincronização combinada (sem criar deployment)...")
         sincronizacao_combinada_flow()
     else:
-        # Criar deployment (usa apenas 1 deployment para ambos os tipos)
-        sincronizacao_combinada_flow.serve(
-            name="sincronizacao-bigquery-combinada",
-            cron="*/5 * * * *",  # A cada 5 minutos
-            description="Sincronização incremental combinada de dados pluviométricos e meteorológicos do NIMBUS para BigQuery. Usa apenas 1 deployment para ambos os tipos."
-        )
+        try:
+            # Criar deployment (usa apenas 1 deployment para ambos os tipos)
+            sincronizacao_combinada_flow.serve(
+                name="sincronizacao-bigquery-combinada",
+                cron="*/5 * * * *",  # A cada 5 minutos
+                description="Sincronização incremental combinada de dados pluviométricos e meteorológicos do NIMBUS para BigQuery. Usa apenas 1 deployment para ambos os tipos."
+            )
+        except PrefectHTTPStatusError as e:
+            if e.response.status_code == 401:
+                print("\n⚠️  Erro 401 Unauthorized: autenticação com Prefect Cloud falhou.")
+                print("   Opções:")
+                print("   1. Fazer login:  prefect cloud login")
+                print("   2. Executar sem deployment:  python prefect_workflow_combinado.py --run-once")
+                print("   3. Usar Prefect Local: descomente PREFECT_API_URL no script e rode 'prefect server start'\n")
+            raise
 

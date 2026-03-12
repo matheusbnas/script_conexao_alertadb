@@ -23,8 +23,8 @@ Flask-CORS
 # BANCO DE DADOS - PostgreSQL
 # ============================================================================
 psycopg2-binary
-# Alternativa (se psycopg2-binary der problema):
-psycopg2
+# Alternativa (se psycopg2-binary der problema), usar APENAS FORA do Docker:
+# psycopg2
 
 # ============================================================================
 # SERVIDOR WSGI PARA PRODUCAO
@@ -57,6 +57,12 @@ google-cloud-bigquery
 google-cloud-bigquery-storage  # Para leitura otimizada do BigQuery
 google-auth
 db-dtypes  # Tipos de dados específicos do BigQuery (DATE, TIME, etc.)
+
+# ============================================================================
+# ORQUESTRADOR - PREFECT (WORKFLOWS)
+# ============================================================================
+prefect
+prefect-gcp
 
 # ============================================================================
 # MONITORAMENTO E LOGS (OPCIONAL)

@@ -1,209 +1,175 @@
-# 🔄 Workflows Prefect - BigQuery
+# 🔄 Workflows Prefect - Sincronização BigQuery
 
-## 📁 Estrutura de Arquivos
+Orquestração da sincronização incremental de dados **pluviométricos** e **meteorológicos** do NIMBUS para o BigQuery.
 
-A estrutura foi organizada seguindo boas práticas de separação de responsabilidades:
+---
 
-```
-scripts/prefect/
-├── prefect_common_tasks.py              # Tasks compartilhadas (verificação de conexões)
-├── prefect_helpers.py                   # Funções auxiliares reutilizáveis
-├── prefect_interval_manager.py          # Gerenciador de intervalo dinâmico
-├── prefect_service.py                  # Serviço de execução contínua
-├── prefect_workflow_pluviometricos.py   # Workflow para dados PLUVIOMÉTRICOS
-├── prefect_workflow_meteorologicos.py   # Workflow para dados METEOROLÓGICOS
-├── prefect_workflow_combinado.py        # Workflow COMBINADO (usa apenas 1 deployment)
-├── prefect.service                      # Arquivo systemd (Linux)
-├── docker-entrypoint.sh                 # Script de entrada Docker
-├── INSTALACAO_SERVICO.md                # Guia de instalação do serviço
-└── README.md                            # Este arquivo
-```
+## 🐳 Rodar via Docker (recomendado)
 
-## 🎯 Por que separar?
+Execução contínua **a cada 5 minutos** para atualizar os dados no BigQuery. Não usa Prefect Cloud; roda em modo local dentro do container.
 
-### ✅ Vantagens da separação:
+### Pré-requisitos
 
-1. **Responsabilidade única**: Cada arquivo tem uma responsabilidade clara
-2. **Manutenção facilitada**: Mudanças em um tipo de dado não afetam o outro
-3. **Deploy independente**: Cada workflow pode ser deployado separadamente
-4. **Escalabilidade**: Fácil adicionar novos tipos de dados no futuro
-5. **Código reutilizável**: Tasks e helpers comuns em módulos separados
-6. **Testes isolados**: Cada workflow pode ser testado independentemente
-7. **Organização**: Arquivos Prefect separados dos scripts BigQuery
+- Docker e Docker Compose
+- Arquivo `.env` na raiz com variáveis de banco e GCP
+- Pasta `credentials/` com `credentials.json` (GCP)
 
-### ❌ Problemas do arquivo único:
-
-- Arquivo muito grande e difícil de manter
-- Mudanças em um tipo afetam o outro
-- Deploy conjunto (não pode parar um sem parar o outro)
-- Dificulta escalabilidade
-- Mistura lógica de orquestração com scripts de sincronização
-
-## 🚀 Como usar
-
-### ⚠️ Limite de Deployments no Prefect Cloud
-
-O plano gratuito do Prefect Cloud tem limite de **5 deployments**. Se você atingir esse limite, verá o erro:
-```
-You have reached the maximum number of deployments for your workspace. Current limit: 5 deployments.
-```
-
-### Soluções para o limite de deployments:
-
-#### Solução 1: Flow Combinado (RECOMENDADO - usa apenas 1 deployment)
-
-Use o flow combinado que sincroniza ambos os tipos em um único deployment:
+### Comandos
 
 ```bash
-# Executar sem criar deployment (teste)
+# Subir o serviço (roda a cada 5 minutos)
+docker-compose up -d
+
+# Ver logs em tempo real
+docker-compose logs -f prefect-service
+
+# Parar
+docker-compose down
+```
+
+### O que roda
+
+- **Workflow padrão**: `combinado` (pluviométricos + meteorológicos em uma única execução).
+- **Intervalo padrão**: 5 minutos (ajuste automático se uma execução passar de 5 min).
+- **Estado**: persistido em `scripts/prefect/.prefect_service_state.json`.
+
+### Variáveis de ambiente (Docker)
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `PREFECT_WORKFLOW` | `combinado` | `combinado`, `pluviometricos` ou `meteorologicos` |
+| `PREFECT_INTERVALO` | `5` | Intervalo entre execuções (minutos) |
+
+Exemplo com intervalo de 10 minutos:
+
+```bash
+PREFECT_INTERVALO=10 docker-compose up -d
+```
+
+Documentação detalhada do serviço: **`INSTALACAO_SERVICO.md`**.
+
+**Guia passo a passo para rodar no Docker (instalar Docker, subir container):** **`COMO_RODAR_DOCKER.md`** (na raiz do projeto). Scripts de atalho: `subir-docker.bat` e `subir-docker.ps1`.
+
+---
+
+## 💻 Rodar localmente (teste ou sem Docker)
+
+Para executar **uma vez** (sem agendamento, sem Prefect Cloud):
+
+```bash
+# Na raiz do projeto, com o venv ativado
+
+# Sincronização combinada (pluviométricos + meteorológicos)
 python scripts/prefect/prefect_workflow_combinado.py --run-once
 
-# Ou criar deployment (usa apenas 1 deployment)
-python scripts/prefect/prefect_workflow_combinado.py
-```
-
-#### Solução 2: Executar sem criar deployment
-
-Execute os workflows diretamente sem criar deployment (útil para testes ou quando limite atingido):
-
-**Pluviométricos:**
-```bash
+# Apenas pluviométricos
 python scripts/prefect/prefect_workflow_pluviometricos.py --run-once
-```
 
-**Meteorológicos:**
-```bash
+# Apenas meteorológicos
 python scripts/prefect/prefect_workflow_meteorologicos.py --run-once
 ```
 
-#### Solução 3: Deletar deployments antigos
+**Windows (PowerShell)** – para evitar erro de encoding no console:
 
-1. Acesse o Prefect Cloud UI
-2. Vá em Deployments
-3. Delete deployments antigos que não são mais necessários
-4. Execute os workflows novamente
-
-#### Solução 4: Usar Prefect Local
-
-Use Prefect Local (sem limite de deployments):
-
-```bash
-# Descomente no arquivo: os.environ["PREFECT_API_URL"] = "http://127.0.0.1:4200/api"
-prefect server start
-python scripts/prefect/prefect_workflow_pluviometricos.py
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+python scripts/prefect/prefect_workflow_combinado.py --run-once
 ```
 
-### Opção 2: Deploy no Prefect Cloud (quando há espaço)
+**Execução contínua local** (loop a cada 5 min, sem Docker):
 
-**Pluviométricos:**
 ```bash
-prefect deploy scripts/prefect/prefect_workflow_pluviometricos.py:sincronizacao_pluviometricos_flow --pool seu-work-pool
+python scripts/prefect/prefect_service.py --workflow combinado --intervalo 5
 ```
 
-**Meteorológicos:**
-```bash
-prefect deploy scripts/prefect/prefect_workflow_meteorologicos.py:sincronizacao_meteorologicos_flow --pool seu-work-pool
+---
+
+## 📁 Estrutura de arquivos
+
+```
+scripts/prefect/
+├── prefect_common_tasks.py              # Tasks compartilhadas (conexões)
+├── prefect_helpers.py                   # Helpers (executar script, status BQ)
+├── prefect_interval_manager.py         # Cálculo de intervalo dinâmico
+├── prefect_service.py                  # Serviço contínuo (Docker/systemd)
+├── prefect_workflow_pluviometricos.py   # Flow pluviométricos
+├── prefect_workflow_meteorologicos.py   # Flow meteorológicos
+├── prefect_workflow_combinado.py        # Flow combinado (1 deployment)
+├── docker-entrypoint.sh                # Entrypoint Docker
+├── prefect.service                     # Exemplo systemd (Linux)
+├── INSTALACAO_SERVICO.md               # Guia de instalação do serviço
+└── README.md                           # Este arquivo
 ```
 
-**Flow Combinado (usa apenas 1 deployment):**
-```bash
-prefect deploy scripts/prefect/prefect_workflow_combinado.py:sincronizacao_combinada_flow --pool seu-work-pool
-```
-
-### Opção 2: Deploy no Prefect Cloud
-
-**Pluviométricos:**
-```bash
-prefect deploy scripts/prefect/prefect_workflow_pluviometricos.py:sincronizacao_pluviometricos_flow --pool seu-work-pool
-```
-
-**Meteorológicos:**
-```bash
-prefect deploy scripts/prefect/prefect_workflow_meteorologicos.py:sincronizacao_meteorologicos_flow --pool seu-work-pool
-```
-
-### Opção 3: Executar ambos simultaneamente
-
-Se você quiser executar ambos ao mesmo tempo, pode usar um script wrapper ou executar em terminais separados.
+---
 
 ## 📊 Tabelas BigQuery
 
 - **Pluviométricos**: `alertadb_cor_raw.pluviometricos`
 - **Meteorológicos**: `alertadb_cor_raw.meteorologicos`
 
-## ⚙️ Configuração
+Scripts de sincronização:
 
-Ambos os workflows usam as mesmas variáveis de ambiente do `.env`:
-- `DB_ORIGEM_HOST`, `DB_ORIGEM_NAME`, `DB_ORIGEM_USER`, `DB_ORIGEM_PASSWORD`
-- `BIGQUERY_PROJECT_ID`
-- `BIGQUERY_DATASET_ID_NIMBUS` (padrão: `alertadb_cor_raw`)
-
-## 🔄 Agendamento
-
-Por padrão, ambos os workflows executam a cada 5 minutos (`*/5 * * * *`).
-
-Para alterar o agendamento, edite o parâmetro `cron` no método `.serve()` de cada arquivo.
-
-## 📂 Relação com scripts BigQuery
-
-Os workflows Prefect executam os scripts de sincronização que estão em:
 - `scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py`
 - `scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py`
 
-Esta separação mantém:
-- **Scripts BigQuery**: Lógica de sincronização e exportação
-- **Workflows Prefect**: Orquestração, agendamento e monitoramento
+---
+
+## ⚙️ Configuração (.env)
+
+Variáveis usadas pelos workflows:
+
+- **Banco origem**: `DB_ORIGEM_HOST`, `DB_ORIGEM_PORT`, `DB_ORIGEM_NAME`, `DB_ORIGEM_USER`, `DB_ORIGEM_PASSWORD`, `DB_ORIGEM_SSLMODE`
+- **BigQuery**: `BIGQUERY_PROJECT_ID`, `BIGQUERY_DATASET_ID_NIMBUS` (padrão: `alertadb_cor_raw`)
+- **Credenciais GCP**: arquivo `credentials/credentials.json`
 
 ---
 
-## 🚀 Execução Contínua como Serviço
+## ⚠️ Troubleshooting
 
-Para executar automaticamente sem intervenção manual, com ajuste automático de intervalo e reinício automático:
+### Erro 401 Unauthorized
 
-### ⭐ RECOMENDADO: Docker
+Se aparecer `PrefectHTTPStatusError: Client error '401 Unauthorized'`:
+
+1. **Para rodar sem Prefect Cloud**: use `--run-once` ou Docker (o serviço já usa modo local).
+2. **Para usar Prefect Cloud**: faça `prefect cloud login` e depois rode o script sem `--run-once`.
+
+### Limite de deployments no Prefect Cloud
+
+O plano gratuito do Prefect Cloud tem limite de **5 deployments**. Se atingir:
+
+- Use o **flow combinado** (1 deployment para os dois tipos), ou
+- Rode via **Docker** ou **`--run-once`** (não consomem deployments).
+
+### Usar Prefect Local (servidor na máquina)
+
+Se quiser UI e agendamento local:
+
+1. No início do script do workflow, descomente:  
+   `os.environ["PREFECT_API_URL"] = "http://127.0.0.1:4200/api"`
+2. Em um terminal: `prefect server start`
+3. No outro: execute o script (ou use `prefect deploy`).
+
+---
+
+## 🔄 Opcional: Deploy no Prefect Cloud
+
+Só é necessário se quiser agendamento e UI no Prefect Cloud:
 
 ```bash
-# Construir e executar
-docker-compose up -d
+prefect cloud login
 
-# Ver logs
-docker-compose logs -f
+# Flow combinado (recomendado – 1 deployment)
+prefect deploy scripts/prefect/prefect_workflow_combinado.py:sincronizacao_combinada_flow --pool seu-work-pool
 
-# Parar
-docker-compose down
+# Ou separados
+prefect deploy scripts/prefect/prefect_workflow_pluviometricos.py:sincronizacao_pluviometricos_flow --pool seu-work-pool
+prefect deploy scripts/prefect/prefect_workflow_meteorologicos.py:sincronizacao_meteorologicos_flow --pool seu-work-pool
 ```
 
-### 🖥️ Alternativa: systemd (Linux)
+---
 
-```bash
-# Instalar serviço
-sudo cp scripts/prefect/prefect.service /etc/systemd/system/prefect-bigquery.service
-sudo systemctl daemon-reload
-sudo systemctl enable prefect-bigquery.service
-sudo systemctl start prefect-bigquery.service
-```
+## 📖 Mais informações
 
-### 📖 Documentação Completa
-
-Veja `INSTALACAO_SERVICO.md` para guia completo de instalação e configuração.
-
-### ⚙️ Funcionalidades do Serviço
-
-- ✅ **Ajuste automático de intervalo**: Se coleta demorar mais de 5 minutos, ajusta automaticamente
-- ✅ **Reinício automático**: Reinicia automaticamente em caso de falha
-- ✅ **Detecção de lacunas**: Detecta lacunas grandes e ajusta intervalo temporariamente
-- ✅ **Estado persistente**: Mantém intervalo ajustado entre reinícios
-- ✅ **Execução contínua**: Roda indefinidamente sem intervenção manual
-
-### 🔄 Como Funciona o Ajuste Automático
-
-1. **Intervalo padrão**: 5 minutos
-2. **Se execução demorar mais de 5 minutos**:
-   - Intervalo ajustado para `tempo_execucao * 1.5`
-   - Arredondado para múltiplo de 5 minutos
-   - Exemplo: 8 minutos → intervalo vira 15 minutos
-3. **Se há lacuna grande** (> 1 dia):
-   - Intervalo temporário maior (15-60 minutos)
-   - Volta ao normal quando lacuna for resolvida
-4. **Se execução ficar muito rápida**:
-   - Intervalo reduzido gradualmente até voltar ao padrão
+- **Instalação do serviço (Docker e systemd)**: `INSTALACAO_SERVICO.md`
+- **Análise dos arquivos**: `ANALISE_ARQUIVOS.md`

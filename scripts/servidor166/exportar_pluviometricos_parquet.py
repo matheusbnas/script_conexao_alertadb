@@ -2,43 +2,28 @@
 # -*- coding: utf-8 -*-
 
 """
-📦 EXPORTAR TABELA PLUVIOMÉTRICOS PARA PARQUET
+📦 EXPORTAR TABELA PLUVIOMÉTRICOS PARA PARQUET - BANCO LOCAL COR
 
 ═══════════════════════════════════════════════════════════════════════════
-🎯 PROPÓSITO DESTE SCRIPT:
+🎯 PROPÓSITO:
 ═══════════════════════════════════════════════════════════════════════════
 
-Este script exporta a tabela "pluviometricos" do banco alertadb_cor para 
-arquivos Parquet. Os arquivos Parquet são eficientes, comprimidos e ideais 
-para backup, transferência de dados ou análise offline.
+Este script exporta dados da tabela 'pluviometricos' do banco local alertadb_cor
+para arquivos Parquet, mantendo a estrutura original das colunas.
 
 ═══════════════════════════════════════════════════════════════════════════
-📋 O QUE ESTE SCRIPT FAZ:
+📋 ESTRUTURA DAS COLUNAS ORIGINAIS:
 ═══════════════════════════════════════════════════════════════════════════
-
-✅ Conecta ao banco alertadb_cor
-✅ Exporta dados da tabela pluviometricos
-✅ Salva em formato Parquet (comprimido e eficiente)
-✅ Divide dados por ano (opcional) para facilitar gerenciamento
-✅ Mostra progresso detalhado durante a exportação
-✅ Exibe estatísticas finais (tamanho dos arquivos, total de registros)
-
-═══════════════════════════════════════════════════════════════════════════
-🚀 COMO USAR:
-═══════════════════════════════════════════════════════════════════════════
-
-1. Configure o arquivo .env com as credenciais:
-   
-   # Banco ORIGEM para EXPORTAÇÃO (alertadb_cor)
-   DB_COPIA_ORIGEM_HOST=10.50.30.166
-   DB_COPIA_ORIGEM_PORT=5432
-   DB_COPIA_ORIGEM_NAME=alertadb_cor
-   DB_COPIA_ORIGEM_USER=postgres
-   DB_COPIA_ORIGEM_PASSWORD=
-
-2. Execute: python scripts/exportar_pluviometricos_parquet.py
-
-3. Os arquivos serão salvos em: exports/pluviometricos_YYYY.parquet
+- dia: timestamp da leitura
+- m05: precipitação 5 minutos
+- m10: precipitação 10 minutos
+- m15: precipitação 15 minutos
+- h01: precipitação 1 hora
+- h04: precipitação 4 horas
+- h24: precipitação 24 horas
+- h96: precipitação 96 horas (4 dias)
+- estacao: nome da estação
+- estacao_id: ID da estação
 
 ═══════════════════════════════════════════════════════════════════════════
 📦 DEPENDÊNCIAS:
@@ -49,302 +34,346 @@ pip install pandas pyarrow psycopg2-binary sqlalchemy python-dotenv
 ═══════════════════════════════════════════════════════════════════════════
 """
 
-# 🔧 Importar bibliotecas necessárias
 import psycopg2
 import pandas as pd
 from sqlalchemy import create_engine
+from pathlib import Path
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-from pathlib import Path
-import sys
+from urllib.parse import quote
 import warnings
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-# Suprimir warnings do pandas sobre DBAPI2
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
-# Carregar variáveis de ambiente
+# Setup de caminhos
 project_root = Path(__file__).parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
-def obter_variavel(nome, obrigatoria=True):
-    """Obtém variável de ambiente, lança erro se obrigatória e não encontrada."""
-    valor = os.getenv(nome)
-    if obrigatoria and not valor:
-        raise ValueError(f"❌ Variável de ambiente obrigatória não encontrada: {nome}")
+# ═══════════════════════════════════════════════════════════════════════════
+# CONFIGURAÇÕES E FUNÇÕES AUXILIARES
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_env(name, required=True):
+    """Obtém variável de ambiente."""
+    valor = os.getenv(name)
+    if required and not valor:
+        raise ValueError(f"❌ Variável obrigatória não encontrada: {name}")
     return valor
 
-def carregar_configuracoes():
-    """Carrega todas as configurações do arquivo .env."""
+def get_config():
+    """Carrega configurações do banco COR."""
     try:
-        # ⚙️ Configurações de conexão ORIGEM (alertadb_cor)
-        origem = {
-            'host': obter_variavel('DB_COPIA_ORIGEM_HOST'),
-            'port': obter_variavel('DB_COPIA_ORIGEM_PORT', obrigatoria=False) or '5432',
-            'dbname': obter_variavel('DB_COPIA_ORIGEM_NAME'),
-            'user': obter_variavel('DB_COPIA_ORIGEM_USER'),
-            'password': obter_variavel('DB_COPIA_ORIGEM_PASSWORD'),
+        config = {
+            'host': get_env('DB_COPIA_ORIGEM_HOST'),
+            'port': get_env('DB_COPIA_ORIGEM_PORT', required=False) or '5432',
+            'dbname': get_env('DB_COPIA_ORIGEM_NAME'),
+            'user': get_env('DB_COPIA_ORIGEM_USER'),
+            'password': get_env('DB_COPIA_ORIGEM_PASSWORD'),
             'connect_timeout': 10
         }
         
-        # Criar string de conexão SQLAlchemy
-        connection_string = f"postgresql://{origem['user']}:{origem['password']}@{origem['host']}:{origem['port']}/{origem['dbname']}"
+        user_enc = quote(config['user'], safe='')
+        pass_enc = quote(config['password'], safe='')
+        conn_str = f"postgresql://{user_enc}:{pass_enc}@{config['host']}:{config['port']}/{config['dbname']}"
         
-        return origem, connection_string
-    
+        return config, conn_str
     except ValueError as e:
-        print("=" * 60)
-        print("❌ ERRO DE CONFIGURAÇÃO")
-        print("=" * 60)
-        print(str(e))
-        print("\n📝 Verifique se o arquivo .env existe e contém todas as variáveis necessárias")
-        print("\n💡 Variáveis necessárias:")
-        print("   - DB_COPIA_ORIGEM_HOST, DB_COPIA_ORIGEM_NAME, DB_COPIA_ORIGEM_USER, DB_COPIA_ORIGEM_PASSWORD")
-        print("=" * 60)
+        print(f"❌ {e}")
+        print("\nVariáveis esperadas no .env:")
+        print("  - DB_COPIA_ORIGEM_HOST")
+        print("  - DB_COPIA_ORIGEM_NAME")
+        print("  - DB_COPIA_ORIGEM_USER")
+        print("  - DB_COPIA_ORIGEM_PASSWORD")
         raise
 
-# Carregar configurações
-ORIGEM, CONNECTION_STRING = carregar_configuracoes()
+ORIGEM, CONNECTION_STRING = get_config()
 
-def criar_diretorio_exports():
-    """Cria o diretório exports se não existir."""
-    exports_dir = project_root / 'exports'
-    exports_dir.mkdir(exist_ok=True)
-    return exports_dir
-
-def testar_conexao():
-    """Testa a conexão com o banco."""
+def test_connection(config):
+    """Testa conexão com o banco."""
     print("=" * 60)
     print("TESTE DE CONEXÃO")
     print("=" * 60)
-    
     try:
-        conn = psycopg2.connect(**ORIGEM)
-        print(f"   ✅ CONEXÃO ({ORIGEM['host']}:{ORIGEM['port']}/{ORIGEM['dbname']}): SUCESSO!")
+        conn = psycopg2.connect(**config)
+        print(f"✅ Conectado a {config['host']}:{config['port']}/{config['dbname']}")
         conn.close()
         return True
-        
     except Exception as e:
-        print(f"   ❌ ERRO: {e}")
+        print(f"❌ Erro: {e}")
         return False
 
-def verificar_tabela():
-    """Verifica se a tabela existe e retorna estatísticas."""
-    conn = None
-    cur = None
-    
+def check_table(config):
+    """Verifica tabela e retorna estatísticas."""
+    conn = cur = None
     try:
-        conn = psycopg2.connect(**ORIGEM)
+        conn = psycopg2.connect(**config)
         cur = conn.cursor()
         
-        # Verificar se a tabela existe
         cur.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'pluviometricos'
-            );
+            SELECT EXISTS (SELECT 1 FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name = 'pluviometricos')
         """)
-        existe = cur.fetchone()[0]
         
-        if not existe:
-            print("   ❌ ERRO: A tabela 'pluviometricos' não existe no banco!")
+        if not cur.fetchone()[0]:
+            print("❌ Tabela 'pluviometricos' não encontrada!")
             return False, None
         
-        # Contar registros
-        cur.execute("SELECT COUNT(*) FROM pluviometricos;")
-        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM pluviometricos")
+        count = cur.fetchone()[0]
         
-        # Obter período dos dados
-        cur.execute("SELECT MIN(dia), MAX(dia) FROM pluviometricos;")
-        datas = cur.fetchone()
-        data_min = datas[0] if datas[0] else None
-        data_max = datas[1] if datas[1] else None
+        cur.execute("SELECT MIN(dia), MAX(dia) FROM pluviometricos")
+        date_min, date_max = cur.fetchone()
         
-        print(f"   ✅ Tabela encontrada!")
-        print(f"   📊 Total de registros: {total:,}")
-        if data_min and data_max:
-            print(f"   📅 Período: {data_min} até {data_max}")
+        print(f"✅ Tabela encontrada")
+        print(f"   Registros: {count:,}")
+        print(f"   Período: {date_min} até {date_max}")
         
-        return True, {'total': total, 'data_min': data_min, 'data_max': data_max}
-        
+        return True, {'count': count, 'min': date_min, 'max': date_max}
     except Exception as e:
-        print(f"   ❌ Erro ao verificar tabela: {e}")
+        print(f"❌ Erro: {e}")
         return False, None
     finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+        if cur: cur.close()
+        if conn: conn.close()
 
-def exportar_por_ano(engine, exports_dir):
-    """Exporta dados divididos por ano."""
+def get_export_dir():
+    """Cria e retorna diretório de exports."""
+    d = project_root / 'exports'
+    d.mkdir(exist_ok=True)
+    return d
+
+def ensure_timestamptz(df):
+    """Garante que coluna 'dia' seja timestamptz no Parquet."""
+    if 'dia' in df.columns:
+        # Converter para datetime com UTC se necessário
+        if not pd.api.types.is_datetime64_any_dtype(df['dia']):
+            df['dia'] = pd.to_datetime(df['dia'], utc=True)
+        elif df['dia'].dt.tz is None:
+            # Se não tem timezone, assumir UTC
+            df['dia'] = df['dia'].dt.tz_localize('UTC')
+        else:
+            # Se já tem timezone diferente de UTC, converter para UTC
+            df['dia'] = df['dia'].dt.tz_convert('UTC')
+    return df
+
+def save_parquet_with_timestamptz(df, fpath):
+    """Salva DataFrame em Parquet preservando timestamptz no dia."""
+    # Garantir tipo correto
+    df = ensure_timestamptz(df)
+    
+    # Converter para PyArrow com schema explícito para timestamptz
+    # build schema: force 'dia' as timestamptz UTC, infer others from numpy dtype
+    fields = []
+    for name in df.columns:
+        if name == 'dia':
+            fields.append(pa.field('dia', pa.timestamp('ns', tz='UTC')))
+        else:
+            # use numpy dtype inference
+            dtype = df[name].dtype
+            try:
+                arrow_type = pa.from_numpy_dtype(dtype)
+            except Exception:
+                arrow_type = None
+            if arrow_type is None:
+                # fallback to automatic inference via Table.from_pandas
+                fields.append(pa.field(name, pa.null()))
+            else:
+                fields.append(pa.field(name, arrow_type))
+    schema = pa.schema(fields)
+    
+    table = pa.Table.from_pandas(df, schema=schema)
+    pq.write_table(table, fpath, compression='snappy')
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FUNÇÕES DE EXPORTAÇÃO
+# ═══════════════════════════════════════════════════════════════════════════
+
+def export_by_year(engine, export_dir):
+    """Exporta dividindo por ano."""
     print("\n" + "=" * 60)
-    print("EXPORTANDO DADOS POR ANO")
+    print("EXPORTANDO POR ANO")
     print("=" * 60)
     
-    # Obter lista de anos disponíveis
-    query_anos = """
-        SELECT DISTINCT EXTRACT(YEAR FROM dia)::INTEGER as ano
-        FROM pluviometricos
-        ORDER BY ano;
-    """
-    df_anos = pd.read_sql_query(query_anos, engine)
-    anos = df_anos['ano'].tolist()
+    years_df = pd.read_sql_query(
+        "SELECT DISTINCT EXTRACT(YEAR FROM dia)::INTEGER as ano FROM pluviometricos ORDER BY ano",
+        engine
+    )
+    years = years_df['ano'].tolist()
     
-    print(f"\n📅 Encontrados {len(anos)} anos: {anos}")
-    print("   Exportando cada ano em um arquivo separado...\n")
+    print(f"\n{len(years)} anos encontrados: {years}\n")
     
-    arquivos_criados = []
-    total_registros = 0
-    tamanho_total = 0
+    files = []
+    total_rows = 0
+    total_size = 0
     
-    for ano in anos:
-        print(f"   📦 Exportando ano {ano}...")
+    for year in years:
+        print(f"  {year}...", end=" ", flush=True)
         
-        # Ler dados do ano
-        query = f"""
-        SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
-        FROM pluviometricos
-        WHERE EXTRACT(YEAR FROM dia) = {ano}
-        ORDER BY dia, estacao_id;
-        """
+        df = pd.read_sql_query(f"""
+            SELECT dia::timestamptz AS dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
+            FROM pluviometricos
+            WHERE EXTRACT(YEAR FROM dia) = {year}
+            ORDER BY dia, estacao_id
+        """, engine)
         
-        df = pd.read_sql_query(query, engine)
-        
-        if len(df) == 0:
-            print(f"      ⚠️  Nenhum dado encontrado para {ano}")
+        if df.empty:
+            print("sem dados")
             continue
         
-        # Salvar em Parquet
-        arquivo = exports_dir / f'pluviometricos_{ano}.parquet'
-        df.to_parquet(arquivo, compression='snappy', index=False)
+        fpath = export_dir / f'pluviometricos_{year}.parquet'
+        save_parquet_with_timestamptz(df, fpath)
         
-        tamanho_mb = arquivo.stat().st_size / (1024 * 1024)
-        arquivos_criados.append(arquivo)
-        total_registros += len(df)
-        tamanho_total += tamanho_mb
+        fsize = fpath.stat().st_size / (1024 * 1024)
+        files.append(fpath)
+        total_rows += len(df)
+        total_size += fsize
         
-        print(f"      ✅ {len(df):,} registros exportados → {arquivo.name} ({tamanho_mb:.2f} MB)")
+        print(f"✅ {len(df):,} registros ({fsize:.2f} MB)")
     
-    return arquivos_criados, total_registros, tamanho_total
+    return files, total_rows, total_size
 
-def exportar_tudo(engine, exports_dir):
-    """Exporta todos os dados em um único arquivo."""
+def export_interval(engine, export_dir, year_start, year_end):
+    """Exporta intervalo de anos."""
+    print("\n" + "=" * 60)
+    print(f"EXPORTANDO {year_start} A {year_end}")
+    print("=" * 60)
+    
+    if year_start > year_end:
+        raise ValueError("Ano inicial deve ser ≤ ano final")
+    
+    print("\nLendo dados...", end=" ", flush=True)
+    df = pd.read_sql_query(f"""
+        SELECT dia::timestamptz AS dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
+        FROM pluviometricos
+        WHERE EXTRACT(YEAR FROM dia) BETWEEN {year_start} AND {year_end}
+        ORDER BY dia, estacao_id
+    """, engine)
+    
+    if df.empty:
+        print("nenhum dado encontrado")
+        return [], 0, 0
+    
+    print(f"✅ {len(df):,} registros")
+    
+    fpath = export_dir / f'pluviometricos_{year_start}_{year_end}.parquet'
+    print("Salvando...", end=" ", flush=True)
+    save_parquet_with_timestamptz(df, fpath)
+    
+    fsize = fpath.stat().st_size / (1024 * 1024)
+    print(f"✅ {fsize:.2f} MB")
+    
+    return [fpath], len(df), fsize
+
+def export_all(engine, export_dir):
+    """Exporta todos os dados em um arquivo."""
     print("\n" + "=" * 60)
     print("EXPORTANDO TODOS OS DADOS")
-    print("=" * 60)
-    
-    print("\n📥 Lendo dados do banco...")
-    print("   Isso pode levar alguns minutos dependendo do volume...\n")
+    print("=" * 60 + "\n")
     
     inicio = datetime.now()
+    fpath = export_dir / 'pluviometricos_completo.parquet'
+    chunk_num = 1
+    total_rows = 0
     
-    # Ler todos os dados
-    query = """
-    SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
-    FROM pluviometricos
-    ORDER BY dia, estacao_id;
-    """
-    
-    # Usar chunksize para processar em lotes e não sobrecarregar memória
-    chunksize = 100000
-    arquivos_criados = []
-    total_registros = 0
-    chunk_numero = 1
-    
-    for chunk_df in pd.read_sql_query(query, engine, chunksize=chunksize):
-        print(f"   📦 Processando chunk {chunk_numero} ({len(chunk_df):,} registros)...")
+    for i, chunk_df in enumerate(pd.read_sql_query("""
+        SELECT dia::timestamptz AS dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
+        FROM pluviometricos ORDER BY dia, estacao_id
+    """, engine, chunksize=100000), 1):
         
-        # Se é o primeiro chunk, criar arquivo novo
-        if chunk_numero == 1:
-            arquivo = exports_dir / 'pluviometricos_completo.parquet'
-            chunk_df.to_parquet(arquivo, compression='snappy', index=False, engine='pyarrow')
+        print(f"  Chunk {i}: {len(chunk_df):,} registros...", end=" ", flush=True)
+        
+        if i == 1:
+            save_parquet_with_timestamptz(chunk_df, fpath)
         else:
-            # Para chunks subsequentes, ler arquivo existente, concatenar e salvar
-            df_existente = pd.read_parquet(arquivo)
-            df_combinado = pd.concat([df_existente, chunk_df], ignore_index=True)
-            df_combinado.to_parquet(arquivo, compression='snappy', index=False, engine='pyarrow')
+            df_old = pd.read_parquet(fpath)
+            df_combined = pd.concat([df_old, chunk_df], ignore_index=True)
+            save_parquet_with_timestamptz(df_combined, fpath)
         
-        total_registros += len(chunk_df)
-        chunk_numero += 1
+        print("✅")
+        total_rows += len(chunk_df)
     
-    tempo_decorrido = (datetime.now() - inicio).total_seconds()
-    tamanho_mb = arquivo.stat().st_size / (1024 * 1024)
-    arquivos_criados.append(arquivo)
+    elapsed = (datetime.now() - inicio).total_seconds()
+    fsize = fpath.stat().st_size / (1024 * 1024)
     
-    print(f"\n   ✅ Exportação concluída!")
-    print(f"      Arquivo: {arquivo.name}")
-    print(f"      Registros: {total_registros:,}")
-    print(f"      Tamanho: {tamanho_mb:.2f} MB")
-    print(f"      Tempo: {tempo_decorrido:.1f} segundos ({tempo_decorrido/60:.1f} minutos)")
+    print(f"\n✅ Concluído em {elapsed:.0f}s")
+    print(f"   Registros: {total_rows:,}")
+    print(f"   Tamanho: {fsize:.2f} MB")
     
-    return arquivos_criados, total_registros, tamanho_mb
+    return [fpath], total_rows, fsize
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
-    """Função principal que executa a exportação."""
     print("=" * 60)
-    print("📦 EXPORTAR TABELA PLUVIOMÉTRICOS PARA PARQUET")
-    print("=" * 60)
-    print()
-    print("🎯 PROPÓSITO:")
-    print("   Este script exporta a tabela 'pluviometricos' do banco alertadb_cor")
-    print("   para arquivos Parquet (formato eficiente e comprimido).")
-    print()
-    print("📋 O QUE SERÁ FEITO:")
-    print("   ✅ Verificar conexão com o banco")
-    print("   ✅ Verificar se a tabela existe")
-    print("   ✅ Exportar dados para arquivos Parquet")
-    print("   ✅ Mostrar estatísticas finais")
-    print()
-    print("=" * 60)
+    print("📦 EXPORTAR PLUVIOMÉTRICOS PARA PARQUET")
+    print("   Banco: alertadb_cor (local)")
+    print("=" * 60 + "\n")
     
-    # Testar conexão
-    if not testar_conexao():
-        print("\n❌ Falha no teste de conexão. Abortando...")
+    if not test_connection(ORIGEM):
+        print("\n❌ Abortando...")
         return
     
-    # Verificar tabela
     print("\n📋 Verificando tabela...")
-    existe, stats = verificar_tabela()
-    if not existe:
-        print("\n❌ Não foi possível continuar. Abortando...")
+    exists, stats = check_table(ORIGEM)
+    if not exists:
+        print("\n❌ Abortando...")
         return
     
-    # Criar diretório de exports
-    exports_dir = criar_diretorio_exports()
-    print(f"\n📁 Diretório de exportação: {exports_dir}")
+    export_dir = get_export_dir()
+    print(f"\n📁 Exports: {export_dir}")
     
-    # Perguntar se deseja dividir por ano
-    print("\n❓ Como deseja exportar os dados?")
-    print("   1. Dividir por ano (um arquivo por ano) - Recomendado para grandes volumes")
-    print("   2. Um único arquivo (todos os dados)")
+    print("\n❓ Opção de exportação:")
+    print("  1. Por ano (arquivo para cada ano)")
+    print("  2. Arquivo único (todos os dados)")
+    print("  3. Intervalo de anos")
     
-    opcao = input("\n   Escolha (1 ou 2): ").strip()
+    opt = input("\nEscolha (1-3): ").strip()
     
-    # Criar engine SQLAlchemy (recomendado pelo pandas)
     engine = create_engine(CONNECTION_STRING, pool_pre_ping=True)
     
     try:
-        if opcao == '1':
-            arquivos, total, tamanho = exportar_por_ano(engine, exports_dir)
+        if opt == '1':
+            files, rows, size = export_by_year(engine, export_dir)
+        elif opt == '3':
+            while True:
+                try:
+                    y1 = int(input("\nAno inicial (YYYY): "))
+                    y2 = int(input("Ano final   (YYYY): "))
+                    if y1 <= y2:
+                        break
+                    print("Ano inicial deve ser ≤ ano final")
+                except ValueError:
+                    print("Digite anos válidos")
+            files, rows, size = export_interval(engine, export_dir, y1, y2)
         else:
-            arquivos, total, tamanho = exportar_tudo(engine, exports_dir)
+            files, rows, size = export_all(engine, export_dir)
         
-        # Estatísticas finais
-        print("\n" + "=" * 60)
-        print("✅ EXPORTAÇÃO FINALIZADA COM SUCESSO!")
-        print("=" * 60)
-        print(f"📊 Total de registros exportados: {total:,}")
-        print(f"📁 Arquivos criados: {len(arquivos)}")
-        print(f"💾 Tamanho total: {tamanho:.2f} MB")
-        print(f"📂 Localização: {exports_dir}")
-        print("\n📋 Arquivos criados:")
-        for arquivo in arquivos:
-            tamanho_arquivo = arquivo.stat().st_size / (1024 * 1024)
-            print(f"   • {arquivo.name} ({tamanho_arquivo:.2f} MB)")
-        print("=" * 60)
-        
+        if files:
+            print("\n" + "=" * 60)
+            print("✅ EXPORTAÇÃO CONCLUÍDA!")
+            print("=" * 60)
+            print(f"Registros: {rows:,}")
+            print(f"Arquivos: {len(files)}")
+            print(f"Tamanho: {size:.2f} MB")
+            print(f"\nArquivos criados:")
+            for f in files:
+                if f.exists():
+                    sz = f.stat().st_size / (1024 * 1024)
+                    print(f"  • {f.name} ({sz:.2f} MB)")
+            print("=" * 60)
+        else:
+            print("\n⚠️  Nenhum arquivo criado")
+    
+    except Exception as e:
+        print(f"\n❌ Erro: {e}")
+        import traceback
+        traceback.print_exc()
+    
     finally:
         engine.dispose()
 

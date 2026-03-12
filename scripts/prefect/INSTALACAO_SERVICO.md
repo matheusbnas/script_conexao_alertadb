@@ -1,10 +1,11 @@
 # 🚀 Instalação do Serviço Prefect - Execução Contínua
 
-Este guia explica como configurar o serviço Prefect para executar automaticamente com:
-- ✅ Ajuste automático de intervalo (se coleta demorar mais de 5 minutos)
+Este guia explica como configurar o serviço para **atualizar os dados do BigQuery a cada 5 minutos** (ou outro intervalo), sem usar Prefect Cloud:
+
+- ✅ Execução a cada N minutos (padrão: 5)
+- ✅ Ajuste automático do intervalo se uma execução demorar mais que o previsto
 - ✅ Reinício automático em caso de falha
-- ✅ Execução contínua sem intervenção manual
-- ✅ Suporte a Docker e systemd (Linux)
+- ✅ Suporte a Docker (recomendado) e systemd (Linux)
 
 ---
 
@@ -19,11 +20,14 @@ Este guia explica como configurar o serviço Prefect para executar automaticamen
 
 ## 🐳 OPÇÃO 1: Docker (Recomendado)
 
+O container executa o workflow em modo **--run-once** a cada N minutos (padrão 5). Não é necessário Prefect Cloud nem servidor Prefect.
+
 ### Vantagens:
 - ✅ Isolamento completo
 - ✅ Fácil de gerenciar
 - ✅ Reinício automático
 - ✅ Funciona em qualquer sistema
+- ✅ Atualiza BigQuery a cada 5 minutos (configurável)
 
 ### Passo 1: Configurar variáveis de ambiente
 
@@ -35,7 +39,7 @@ Crie ou edite `.env` na raiz do projeto com todas as variáveis necessárias.
 # Construir imagem
 docker-compose build
 
-# Executar em background
+# Executar em background (sincronização a cada 5 minutos)
 docker-compose up -d
 
 # Ver logs
@@ -44,6 +48,8 @@ docker-compose logs -f
 # Parar
 docker-compose down
 ```
+
+Por padrão o **workflow combinado** (pluviométricos + meteorológicos) roda a cada **5 minutos**. Para alterar o intervalo ou o tipo de workflow, use as variáveis de ambiente (ex.: `PREFECT_INTERVALO=10`, `PREFECT_WORKFLOW=pluviometricos`).
 
 ### Passo 3: Verificar status
 

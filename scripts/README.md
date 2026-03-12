@@ -68,6 +68,18 @@ python scripts/cloudsql/sincronizar_para_cloudsql.py --once
 
 ---
 
+## 🔄 BigQuery (Prefect + Docker)
+
+Sincronização NIMBUS → BigQuery **a cada 5 minutos** via Docker:
+
+```bash
+docker-compose up -d
+```
+
+Ver: **[scripts/prefect/README.md](prefect/README.md)** e **[scripts/prefect/INSTALACAO_SERVICO.md](prefect/INSTALACAO_SERVICO.md)**.
+
+---
+
 ## 📚 Documentação
 
 - [README Principal](../README.md)

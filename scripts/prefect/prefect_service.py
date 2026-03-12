@@ -55,9 +55,20 @@ def salvar_estado():
     """Salva estado do serviço em arquivo."""
     try:
         estado_servico['arquivo_estado'].parent.mkdir(parents=True, exist_ok=True)
+        
+        # Garantir que ultima_execucao esteja em formato serializável
+        ultima_execucao = estado_servico.get('ultima_execucao')
+        if isinstance(ultima_execucao, datetime):
+            ultima_execucao_str = ultima_execucao.isoformat()
+        elif isinstance(ultima_execucao, str):
+            # Já está serializado
+            ultima_execucao_str = ultima_execucao
+        else:
+            ultima_execucao_str = None
+        
         with open(estado_servico['arquivo_estado'], 'w') as f:
             json.dump({
-                'ultima_execucao': estado_servico['ultima_execucao'].isoformat() if estado_servico['ultima_execucao'] else None,
+                'ultima_execucao': ultima_execucao_str,
                 'intervalo_atual_minutos': estado_servico['intervalo_atual_minutos']
             }, f, indent=2)
     except Exception as e:
@@ -116,6 +127,23 @@ def executar_workflow(workflow_tipo: str) -> Dict:
         sucesso = process.returncode == 0
         
         print(f"   {'✅' if sucesso else '❌'} Execução concluída em {tempo_decorrido:.1f} segundos")
+
+        # Em caso de falha, imprimir um resumo do stdout/stderr para facilitar o diagnóstico
+        if not sucesso:
+            print("\n   📄 Saída (stdout) do workflow:")
+            if stdout_text.strip():
+                for line in stdout_text.splitlines()[-20:]:
+                    print(f"      {line}")
+            else:
+                print("      (stdout vazio)")
+
+            print("\n   📄 Erros (stderr) do workflow:")
+            if stderr_text.strip():
+                for line in stderr_text.splitlines()[-20:]:
+                    print(f"      {line}")
+            else:
+                print("      (stderr vazio)")
+            print()
         
         return {
             'sucesso': sucesso,

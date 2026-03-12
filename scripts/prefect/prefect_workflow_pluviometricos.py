@@ -11,14 +11,18 @@ Tabela: pluviometricos
 """
 
 import os
+import sys
+# Com --run-once: usar API efêmera para não contactar Prefect Cloud (evita 401)
+if '--run-once' in sys.argv:
+    os.environ["PREFECT_API_URL"] = ""
+    os.environ["PREFECT_SERVER_ALLOW_EPHEMERAL_MODE"] = "true"
 # Configuração Prefect: Use Cloud ou Local
 # os.environ["PREFECT_API_URL"] = "http://127.0.0.1:4200/api"  # Descomente para Prefect Local
 
 from prefect import flow, task
+from prefect.exceptions import PrefectHTTPStatusError
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-import sys
-import os
 from dotenv import load_dotenv
 
 # Adicionar diretório atual ao path para imports
@@ -342,10 +346,19 @@ if __name__ == "__main__":
         print("🔄 Executando sincronização pluviométricos (sem criar deployment)...")
         sincronizacao_pluviometricos_flow()
     else:
-        # Criar deployment (requer Prefect Cloud ou Local rodando)
-        sincronizacao_pluviometricos_flow.serve(
-            name="sincronizacao-bigquery-pluviometricos",
-            cron="*/5 * * * *",  # A cada 5 minutos
-            description="Sincronização incremental de dados pluviométricos do NIMBUS para BigQuery (tabela: pluviometricos)"
-        )
+        try:
+            # Criar deployment (requer Prefect Cloud ou Local rodando)
+            sincronizacao_pluviometricos_flow.serve(
+                name="sincronizacao-bigquery-pluviometricos",
+                cron="*/5 * * * *",  # A cada 5 minutos
+                description="Sincronização incremental de dados pluviométricos do NIMBUS para BigQuery (tabela: pluviometricos)"
+            )
+        except PrefectHTTPStatusError as e:
+            if e.response.status_code == 401:
+                print("\n⚠️  Erro 401 Unauthorized: autenticação com Prefect Cloud falhou.")
+                print("   Opções:")
+                print("   1. Fazer login:  prefect cloud login")
+                print("   2. Executar sem deployment:  python prefect_workflow_pluviometricos.py --run-once")
+                print("   3. Usar Prefect Local: descomente PREFECT_API_URL no script e rode 'prefect server start'\n")
+            raise
 
