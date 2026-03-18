@@ -296,6 +296,7 @@ def obter_schema_pluviometricos():
     """Retorna schema do BigQuery para tabela pluviometricos."""
     return [
         bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso. dia_original guarda o mesmo instante em formato legível com offset SP."),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="NULLABLE", description="Data e hora da medição em horário local de São Paulo (America/Sao_Paulo), sem informação de timezone. Representa o mesmo instante de dia_utc convertido para o fuso de SP."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Mesmo instante que dia_utc, formatado como horário local de São Paulo com offset."),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone de São Paulo (ex: -0300, -0200). Use com dia_original para referência em horário local."),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
@@ -460,15 +461,16 @@ def sincronizar_incremental():
                 if col in chunk_df.columns:
                     chunk_df = chunk_df.drop(columns=[col])
             
-            # Processar colunas: dia_utc (UTC), dia_original (STRING em SP) e utc_offset (STRING)
+            # Processar colunas: dia_utc (UTC), dia (horário local SP), dia_original (STRING em SP) e utc_offset (STRING)
             def converter_para_utc_e_processar(dt):
-                """Converte timestamp e retorna (dia_utc, dia_original_str, utc_offset_str).
+                """Converte timestamp e retorna (dia_utc, dia_local_sp, dia_original_str, utc_offset_str).
                 - dia_utc: timestamp em UTC (sem timezone) para o BigQuery
+                - dia_local_sp (dia): mesmo instante em horário local de São Paulo (America/Sao_Paulo), sem timezone
                 - dia_original: string com horário local de SP e offset (ex: "1997-01-02 11:08:40.000 -0300")
                 - utc_offset: offset UTC do timezone de SP (ex: "-0300" ou "-0200")
                 """
                 if pd.isna(dt):
-                    return (None, None, None)
+                    return (None, None, None, None)
                 try:
                     if isinstance(dt, str):
                         dt_parsed = pd.to_datetime(dt)
@@ -504,15 +506,18 @@ def sincronizar_incremental():
                     
                     # Armazenar em UTC no BigQuery (dia_utc)
                     dt_utc = dt_parsed.tz_convert('UTC').tz_localize(None) if dt_parsed.tz is not None else dt_parsed
-                    return (dt_utc, dia_original_str, utc_offset_str)
+                    # Armazenar também o mesmo instante em horário local de São Paulo, sem timezone (dia)
+                    dia_local_sp = dt_sp.tz_localize(None)
+                    return (dt_utc, dia_local_sp, dia_original_str, utc_offset_str)
                 except Exception as e:
                     print(f"      ⚠️  Erro ao processar timestamp: {e}")
-                    return (None, None, None)
+                    return (None, None, None, None)
             
             resultados = chunk_df['dia_utc'].apply(converter_para_utc_e_processar)
             chunk_df['dia_utc'] = resultados.apply(lambda x: x[0])
-            chunk_df['dia_original'] = resultados.apply(lambda x: x[1])
-            chunk_df['utc_offset'] = resultados.apply(lambda x: x[2])
+            chunk_df['dia'] = resultados.apply(lambda x: x[1])
+            chunk_df['dia_original'] = resultados.apply(lambda x: x[2])
+            chunk_df['utc_offset'] = resultados.apply(lambda x: x[3])
             
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')

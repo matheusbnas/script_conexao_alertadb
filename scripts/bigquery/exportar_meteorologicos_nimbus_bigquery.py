@@ -231,6 +231,7 @@ def obter_schema_meteorologicos():
     """Retorna schema do BigQuery para tabela meteorologicos."""
     return [
         bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ NOT NULL do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso horário."),
+        bigquery.SchemaField("dia", "TIMESTAMP", mode="NULLABLE", description="Data e hora da medição em horário local de São Paulo (America/Sao_Paulo), sem informação de timezone. Representa o mesmo instante de dia_utc convertido para o fuso de SP."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
         bigquery.SchemaField("estacao", "STRING", mode="NULLABLE", description="Nome da estação meteorológica"),
@@ -489,6 +490,31 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             if col in chunk_df.columns:
                 chunk_df = chunk_df.drop(columns=[col])
         
+        # Converter timestamp para horário local de São Paulo (dia) e UTC (dia_utc)
+        def converter_para_dia_local_sp(dt):
+            """Converte timestamp original para horário local de São Paulo (America/Sao_Paulo), sem timezone."""
+            if pd.isna(dt):
+                return None
+            try:
+                if isinstance(dt, str):
+                    dt_parsed = pd.to_datetime(dt)
+                elif isinstance(dt, pd.Timestamp):
+                    dt_parsed = dt
+                elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                    dt_parsed = pd.Timestamp(dt)
+                else:
+                    dt_parsed = pd.to_datetime(dt)
+                
+                if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
+                    dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
+                else:
+                    dt_parsed = dt_parsed.tz_localize('UTC')
+                    dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
+                
+                return dt_sp.tz_localize(None)
+            except Exception:
+                return None
+        
         # Processar coluna dia_utc: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
         def processar_dia_timestamp(dt):
             """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC).
@@ -616,7 +642,8 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             except Exception:
                 return None
         
-        # Processar todas as colunas: dia_utc (TIMESTAMP), dia_original (STRING) e utc_offset (STRING)
+        # Processar todas as colunas: dia_utc (TIMESTAMP), dia (TIMESTAMP SP), dia_original (STRING) e utc_offset (STRING)
+            chunk_df['dia'] = chunk_df['dia_utc'].apply(converter_para_dia_local_sp)
             chunk_df['dia_original'] = chunk_df['dia_utc'].apply(formatar_dia_original)
             chunk_df['utc_offset'] = chunk_df['dia_utc'].apply(extrair_utc_offset)
             chunk_df['dia_utc'] = chunk_df['dia_utc'].apply(processar_dia_timestamp)
