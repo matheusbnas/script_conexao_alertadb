@@ -522,14 +522,11 @@ def sincronizar_incremental():
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
             
-            # Converter colunas numéricas - manter tipo original do banco (não forçar float64)
-            # O banco pode retornar INTEGER ou NUMERIC, manter como vem
+            # Converter colunas numéricas no mesmo padrão do script de exportação (FLOAT64)
             colunas_numericas = ['m05', 'm10', 'm15', 'h01', 'h04', 'h24', 'h96']
             for col in colunas_numericas:
                 if col in chunk_df.columns:
-                    # Converter para numérico mas manter tipo original (int se for int, float se for float)
-                    chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce')
-                    # Não forçar float64 - manter tipo original (pode ser int64 ou float64)
+                    chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
             
             # Filtrar registros com dia_utc NULL
             registros_antes = len(chunk_df)
