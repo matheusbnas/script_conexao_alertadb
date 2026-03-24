@@ -21,20 +21,18 @@ wait_for_service() {
     return 1
 }
 
-# Verificar variáveis de ambiente obrigatórias
-if [ -z "$DB_ORIGEM_HOST" ]; then
-    echo "❌ ERRO: DB_ORIGEM_HOST não definido"
-    exit 1
-fi
-
-# Aguardar banco de dados (se necessário)
-if [ -n "$DB_ORIGEM_HOST" ]; then
-    wait_for_service "$DB_ORIGEM_HOST" "${DB_ORIGEM_PORT:-5432}" 30 || true
-fi
-
 # Executar comando
 case "$1" in
     prefect-service)
+        # Verificar variáveis de ambiente obrigatórias para o serviço de sincronização
+        if [ -z "$DB_ORIGEM_HOST" ]; then
+            echo "❌ ERRO: DB_ORIGEM_HOST não definido"
+            exit 1
+        fi
+
+        # Aguardar banco de dados de origem (se necessário)
+        wait_for_service "$DB_ORIGEM_HOST" "${DB_ORIGEM_PORT:-5432}" 30 || true
+
         echo "🚀 Iniciando serviço Prefect..."
         exec python scripts/prefect/prefect_service.py --workflow "${PREFECT_WORKFLOW:-combinado}" --intervalo "${PREFECT_INTERVALO:-5}"
         ;;

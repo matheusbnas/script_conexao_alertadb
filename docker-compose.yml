@@ -1,18 +1,33 @@
-version: '3.8'
-
 services:
+  # Servidor Prefect local (UI web)
+  prefect-server:
+    build: .
+    container_name: prefect-server-local
+    restart: unless-stopped
+    command: ["prefect-server"]
+
+    ports:
+      - "4200:4200"
+
+    networks:
+      - prefect-network
+
   # Serviço padrão: workflow COMBINADO (pluviométricos + meteorológicos)
-  # Não usa Prefect Cloud; executa em modo --run-once em loop dentro do container.
+  # Usa Prefect local para visualização das execuções em tempo real.
   prefect-service:
     build: .
     container_name: prefect-bigquery-sync
     restart: unless-stopped
+
+    depends_on:
+      - prefect-server
     
     environment:
       # Prefect
       - PREFECT_WORKFLOW=${PREFECT_WORKFLOW:-combinado}
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://prefect-server:4200/api}
+      - PREFECT_STATE_FILE=/app/scripts/prefect/state/combinado.json
       
       # Banco de dados (do .env ou variáveis de ambiente)
       - DB_ORIGEM_HOST=${DB_ORIGEM_HOST}
@@ -36,14 +51,14 @@ services:
       # Logs
       - ./logs:/app/logs
       # Estado do serviço
-      - ./scripts/prefect/.prefect_service_state.json:/app/scripts/prefect/.prefect_service_state.json
+      - ./scripts/prefect/state:/app/scripts/prefect/state
     
     networks:
       - prefect-network
     
     healthcheck:
       # Considera saudável após o estado do serviço existir (após primeira execução)
-      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/scripts/prefect/.prefect_service_state.json') else 1)"]
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/scripts/prefect/state/combinado.json') else 1)"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -55,11 +70,15 @@ services:
     container_name: prefect-bigquery-pluviometricos
     restart: unless-stopped
 
+    depends_on:
+      - prefect-server
+
     environment:
       # Prefect
       - PREFECT_WORKFLOW=pluviometricos
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://prefect-server:4200/api}
+      - PREFECT_STATE_FILE=/app/scripts/prefect/state/pluviometricos.json
 
       # Banco de dados (do .env ou variáveis de ambiente)
       - DB_ORIGEM_HOST=${DB_ORIGEM_HOST}
@@ -79,7 +98,7 @@ services:
       - ./credentials:/app/credentials:ro
       - ./.env:/app/.env:ro
       - ./logs:/app/logs
-      - ./scripts/prefect/.prefect_service_state.json:/app/scripts/prefect/.prefect_service_state.json
+      - ./scripts/prefect/state:/app/scripts/prefect/state
 
     networks:
       - prefect-network
@@ -90,11 +109,15 @@ services:
     container_name: prefect-bigquery-meteorologicos
     restart: unless-stopped
 
+    depends_on:
+      - prefect-server
+
     environment:
       # Prefect
       - PREFECT_WORKFLOW=meteorologicos
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://prefect-server:4200/api}
+      - PREFECT_STATE_FILE=/app/scripts/prefect/state/meteorologicos.json
 
       # Banco de dados (do .env ou variáveis de ambiente)
       - DB_ORIGEM_HOST=${DB_ORIGEM_HOST}
@@ -114,7 +137,7 @@ services:
       - ./credentials:/app/credentials:ro
       - ./.env:/app/.env:ro
       - ./logs:/app/logs
-      - ./scripts/prefect/.prefect_service_state.json:/app/scripts/prefect/.prefect_service_state.json
+      - ./scripts/prefect/state:/app/scripts/prefect/state
 
     networks:
       - prefect-network

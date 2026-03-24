@@ -14,8 +14,8 @@ Tabelas:
 
 import os
 import sys
-# Com --run-once: usar API efêmera para não contactar Prefect Cloud (evita 401)
-if '--run-once' in sys.argv:
+# Com --run-once: usar API efêmera apenas quando PREFECT_API_URL não estiver definido
+if '--run-once' in sys.argv and not os.getenv("PREFECT_API_URL"):
     os.environ["PREFECT_API_URL"] = ""
     os.environ["PREFECT_SERVER_ALLOW_EPHEMERAL_MODE"] = "true"
 # Configuração Prefect: Use Cloud ou Local
@@ -208,7 +208,8 @@ if __name__ == "__main__":
     # Para executar sem criar deployment (teste local)
     if '--run-once' in sys.argv:
         print("🔄 Executando sincronização combinada (sem criar deployment)...")
-        sincronizacao_combinada_flow()
+        resultado = sincronizacao_combinada_flow()
+        sys.exit(0 if resultado.get('sucesso', False) else 1)
     else:
         try:
             # Criar deployment (usa apenas 1 deployment para ambos os tipos)

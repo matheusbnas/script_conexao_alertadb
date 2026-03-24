@@ -38,7 +38,12 @@ estado_servico = {
     'ultima_execucao': None,
     'intervalo_atual_minutos': 5,
     'execucoes_consecutivas_rapidas': 0,
-    'arquivo_estado': project_root / 'scripts' / 'prefect' / '.prefect_service_state.json'
+    'arquivo_estado': Path(
+        os.getenv(
+            'PREFECT_STATE_FILE',
+            str(project_root / 'scripts' / 'prefect' / '.prefect_service_state.json')
+        )
+    )
 }
 
 def carregar_estado():
