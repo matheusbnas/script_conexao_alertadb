@@ -4,7 +4,7 @@
 # ============================================================================
 #
 # Este script configura o cron para executar a sincronização automaticamente
-# a cada 5 minutos. Suporta sincronização normal e Cloud SQL.
+# a cada 5 minutos.
 #
 # ============================================================================
 # USO:
@@ -14,18 +14,18 @@
 #   ./configurar_cron.sh normal
 #   ou apenas: ./configurar_cron.sh
 #
-# Configurar sincronização Cloud SQL:
-#   ./configurar_cron.sh cloudsql
+# Configurar sincronização BigQuery:
+#   ./configurar_cron.sh bigquery
 #
 # ============================================================================
 
-# Tipo de sincronização (normal, cloudsql, bigquery ou bigquery_servidor166)
+# Tipo de sincronização (normal, bigquery ou bigquery_servidor166)
 TIPO="${1:-normal}"
 
 # Validar tipo
-if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ] && [ "$TIPO" != "bigquery" ] && [ "$TIPO" != "bigquery_servidor166" ]; then
-    echo "❌ ERRO: Tipo inválido. Use 'normal', 'cloudsql', 'bigquery' ou 'bigquery_servidor166'"
-    echo "Uso: $0 [normal|cloudsql|bigquery|bigquery_servidor166]"
+if [ "$TIPO" != "normal" ] && [ "$TIPO" != "bigquery" ] && [ "$TIPO" != "bigquery_servidor166" ]; then
+    echo "❌ ERRO: Tipo inválido. Use 'normal', 'bigquery' ou 'bigquery_servidor166'"
+    echo "Uso: $0 [normal|bigquery|bigquery_servidor166]"
     exit 1
 fi
 
@@ -34,9 +34,7 @@ CRON_SCRIPT="$SCRIPT_DIR/cron.sh"
 CRON_JOB="*/5 * * * * $CRON_SCRIPT $TIPO"
 
 # Mensagens baseadas no tipo
-if [ "$TIPO" = "cloudsql" ]; then
-    TIPO_DESCRICAO="Cloud SQL"
-elif [ "$TIPO" = "bigquery" ]; then
+if [ "$TIPO" = "bigquery" ]; then
     TIPO_DESCRICAO="BigQuery (NIMBUS)"
 elif [ "$TIPO" = "bigquery_servidor166" ]; then
     TIPO_DESCRICAO="BigQuery (Servidor 166)"

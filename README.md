@@ -1,6 +1,6 @@
 # 🌧️ Sistema de Sincronização de Dados Pluviométricos e Meteorológicos
 
-Sincroniza dados pluviométricos e meteorológicos do banco **alertadb** para **alertadb_cor** (servidor 166), Cloud SQL GCP e Google BigQuery.
+Sincroniza dados pluviométricos e meteorológicos do banco **alertadb** (NIMBUS) para **alertadb_cor** (servidor 166) e Google BigQuery.
 
 ---
 
@@ -14,7 +14,7 @@ pip install -r requirements.txt
 
 ### 2. Configuração
 
-Crie o arquivo `.env` com as credenciais (veja `docs/CONFIGURACAO_EXEMPLO.md`):
+Crie o arquivo `.env` baseado no `.env.example`:
 
 ```env
 # Banco origem (alertadb)
@@ -28,12 +28,6 @@ DB_DESTINO_HOST=10.50.30.166
 DB_DESTINO_NAME=alertadb_cor
 DB_DESTINO_USER=...
 DB_DESTINO_PASSWORD=...
-
-# Cloud SQL (opcional)
-DB_CLOUDSQL_HOST=...
-DB_CLOUDSQL_NAME=...
-DB_CLOUDSQL_USER=...
-DB_CLOUDSQL_PASSWORD=...
 ```
 
 ### 3. Carga Inicial
@@ -41,9 +35,6 @@ DB_CLOUDSQL_PASSWORD=...
 ```bash
 # Servidor 166 (obrigatório)
 python scripts/servidor166/carregar_pluviometricos_historicos.py
-
-# Cloud SQL (opcional)
-python scripts/cloudsql/carregar_para_cloudsql_inicial.py
 
 # BigQuery (opcional)
 python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
@@ -59,9 +50,6 @@ chmod +x configurar_cron.sh cron.sh
 # Sincronização normal (servidor 166)
 ./configurar_cron.sh normal
 
-# Sincronização Cloud SQL
-./configurar_cron.sh cloudsql
-
 # Sincronização BigQuery
 ./configurar_cron.sh bigquery
 ```
@@ -72,17 +60,14 @@ chmod +x configurar_cron.sh cron.sh
 
 ```
 scripts/
-├── servidor166/          # Scripts para máquina virtual
+├── servidor166/          # Scripts para máquina virtual (servidor 166)
 │   ├── carregar_pluviometricos_historicos.py
 │   ├── sincronizar_pluviometricos_novos.py
-│   ├── app.py            # API REST
-│   └── ...
+│   ├── validar_dados_pluviometricos.py
+│   ├── exportar_pluviometricos_parquet.py
+│   └── app.py            # API REST Flask
 │
-├── cloudsql/            # Scripts para Cloud SQL
-│   ├── carregar_para_cloudsql_inicial.py
-│   └── sincronizar_para_cloudsql.py
-│
-└── bigquery/            # Scripts para Google BigQuery
+└── bigquery/             # Scripts para Google BigQuery
     ├── exportar_pluviometricos_nimbus_bigquery.py
     ├── exportar_pluviometricos_servidor166_bigquery.py
     ├── exportar_meteorologicos_nimbus_bigquery.py
@@ -102,10 +87,9 @@ docs/                     # Documentação completa
 
 - [Scripts](scripts/README.md) - Documentação dos scripts
 - [BigQuery](scripts/bigquery/README.md) - Documentação dos scripts BigQuery
-- [Automação](automacao/README.md) - Configuração de cron
-- [Configurar Cron](docs/CONFIGURAR_CRON.md) - Guia completo
-- [Cloud SQL](docs/GUIA_RAPIDO_CLOUD_SQL.md) - Guia rápido Cloud SQL
-- [BigQuery](docs/BIGQUERY_GUIA_COMPLETO.md) - Guia completo BigQuery
+- [Automação](automacao/README.md) - Configuração de cron e Prefect
+- [BigQuery Guia](docs/BIGQUERY_GUIA_COMPLETO.md) - Guia completo BigQuery
+- [Prefect](docs/PREFECT_README.md) - Guia do Prefect
 - [API REST](docs/GUIA_USO_API.md) - Documentação da API
 
 ---
@@ -119,11 +103,6 @@ docs/                     # Documentação completa
 - **app.py** - API REST Flask
 - **validar_dados_pluviometricos.py** - Validação de dados
 - **exportar_pluviometricos_parquet.py** - Exportação para Parquet
-
-### Cloud SQL
-
-- **carregar_para_cloudsql_inicial.py** - Carga inicial Cloud SQL
-- **sincronizar_para_cloudsql.py** - Sincronização incremental Cloud SQL
 
 ### BigQuery
 
@@ -152,13 +131,6 @@ docs/                     # Documentação completa
 - `DB_DESTINO_USER` - Usuário
 - `DB_DESTINO_PASSWORD` - Senha
 
-### Cloud SQL (opcional)
-- `DB_CLOUDSQL_HOST` - Host Cloud SQL
-- `DB_CLOUDSQL_PORT` - Porta (padrão: 5432)
-- `DB_CLOUDSQL_NAME` - Nome do banco
-- `DB_CLOUDSQL_USER` - Usuário
-- `DB_CLOUDSQL_PASSWORD` - Senha
-
 ### BigQuery (opcional)
 - `BIGQUERY_PROJECT_ID` - ID do projeto GCP
 - `BIGQUERY_DATASET_ID_NIMBUS` - Dataset para dados NIMBUS (padrão: alertadb_cor_raw)
@@ -171,6 +143,4 @@ docs/                     # Documentação completa
 
 ## 🆘 Suporte
 
-Para problemas ou dúvidas, consulte:
-- [Documentação Completa](docs/)
-- [Estrutura do Projeto](ESTRUTURA_PROJETO.md)
+Para problemas ou dúvidas, consulte a pasta [docs/](docs/).

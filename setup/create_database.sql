@@ -1,9 +1,14 @@
 -- ============================================================================
 -- 🌧️ SCRIPT SQL PARA IMPORTAR DADOS PLUVIOMÉTRICOS VIA DBLINK
 -- ============================================================================
--- 
--- Este script substitui o Python, fazendo tudo via SQL
+--
+-- Este script substitui o Python, fazendo tudo via SQL.
 -- Execute no banco DESTINO: alertadb_cor (10.50.30.166)
+--
+-- ANTES DE USAR: substitua as variáveis abaixo pelos valores reais:
+--   <ORIGEM_HOST>     — IP do banco NIMBUS
+--   <ORIGEM_USER>     — usuário do banco NIMBUS
+--   <ORIGEM_PASSWORD> — senha do banco NIMBUS
 -- ============================================================================
 
 -- 1️⃣ INSTALAR EXTENSÃO DBLINK (se não existir)
@@ -14,15 +19,13 @@ DO $$
 DECLARE
     teste INTEGER;
 BEGIN
-    -- Tenta conectar ao banco origem
     SELECT * INTO teste
     FROM dblink(
-        'host=10.2.223.114 dbname=alertadb user=planejamento_cor password=$1u2ddi(X?D}339x',
+        'host=<ORIGEM_HOST> dbname=alertadb user=<ORIGEM_USER> password=<ORIGEM_PASSWORD>',
         'SELECT 1'
     ) AS t(resultado INTEGER);
     
     RAISE NOTICE '✅ CONEXÃO COM BANCO ORIGEM: SUCESSO!';
-    RAISE NOTICE '   Host: 10.2.223.114';
     RAISE NOTICE '   Banco: alertadb';
     
 EXCEPTION WHEN OTHERS THEN
@@ -55,16 +58,15 @@ BEGIN
     -- Consultar totais no banco origem
     SELECT * INTO total_origem
     FROM dblink(
-        'host=10.2.223.114 dbname=alertadb user=planejamento_cor password=$1u2ddi(X?D}339x',
+        'host=<ORIGEM_HOST> dbname=alertadb user=<ORIGEM_USER> password=<ORIGEM_PASSWORD>',
         'SELECT COUNT(*) FROM public.estacoes_leitura el
          JOIN public.estacoes_leiturachuva elc ON elc.leitura_id = el.id
          JOIN public.estacoes_estacao ee ON ee.id = el.estacao_id'
     ) AS t(total BIGINT);
     
-    -- Consultar período disponível
     SELECT * INTO data_min, data_max
     FROM dblink(
-        'host=10.2.223.114 dbname=alertadb user=planejamento_cor password=$1u2ddi(X?D}339x',
+        'host=<ORIGEM_HOST> dbname=alertadb user=<ORIGEM_USER> password=<ORIGEM_PASSWORD>',
         'SELECT MIN(el."horaLeitura"), MAX(el."horaLeitura")
          FROM public.estacoes_leitura el
          JOIN public.estacoes_leiturachuva elc ON elc.leitura_id = el.id
@@ -103,7 +105,7 @@ BEGIN
     SELECT 
         dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
     FROM dblink(
-        'host=10.2.223.114 dbname=alertadb user=planejamento_cor password=$1u2ddi(X?D}339x',
+        'host=<ORIGEM_HOST> dbname=alertadb user=<ORIGEM_USER> password=<ORIGEM_PASSWORD>',
         $query$
         SELECT 
             el."horaLeitura" AS dia,

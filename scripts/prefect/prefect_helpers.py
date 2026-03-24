@@ -7,9 +7,11 @@
 Funções auxiliares reutilizáveis para workflows Prefect.
 """
 
+import re
 import subprocess
 import sys
 import os
+import traceback
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
@@ -38,8 +40,7 @@ def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: in
         env = os.environ.copy()
         env['PYTHONIOENCODING'] = 'utf-8'
         
-        import subprocess as sp
-        process = sp.Popen(
+        process = subprocess.Popen(
             [sys.executable, str(script_path), '--once'],
             cwd=str(project_root),
             stdout=sp.PIPE,
@@ -106,7 +107,6 @@ def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: in
             # Extrair informações úteis do output
             registros_processados = 0
             if "registros" in output_completo.lower():
-                import re
                 match = re.search(r'(\d[\d,]*)\s+registros', output_completo)
                 if match:
                     registros_processados = int(match.group(1).replace(',', ''))
@@ -158,7 +158,6 @@ def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: in
         }
     except Exception as e:
         print(f"❌ ERRO FATAL ao executar sincronização incremental: {e}")
-        import traceback
         traceback.print_exc()
         return {
             'sucesso': False,

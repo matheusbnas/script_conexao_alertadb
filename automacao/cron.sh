@@ -4,7 +4,6 @@
 # ============================================================================
 #
 # Este script executa a sincronização incremental automaticamente via cron.
-# Suporta sincronização normal (servidor 166) e Cloud SQL.
 #
 # ============================================================================
 # USO:
@@ -14,25 +13,27 @@
 #   ./cron.sh normal
 #   ou apenas: ./cron.sh
 #
-# Sincronização Cloud SQL:
-#   ./cron.sh cloudsql
+# Sincronização BigQuery:
+#   ./cron.sh bigquery
+#   ./cron.sh bigquery_servidor166
 #
 # ============================================================================
 # CONFIGURAÇÃO NO CRONTAB:
 # ============================================================================
 #
-# Normal: */5 * * * * /caminho/completo/automacao/cron.sh normal
-# Cloud SQL: */5 * * * * /caminho/completo/automacao/cron.sh cloudsql
+# Normal:             */5 * * * * /caminho/completo/automacao/cron.sh normal
+# BigQuery:           */5 * * * * /caminho/completo/automacao/cron.sh bigquery
+# BigQuery srv166:    */5 * * * * /caminho/completo/automacao/cron.sh bigquery_servidor166
 #
 # ============================================================================
 
-# Tipo de sincronização (normal, cloudsql, bigquery ou bigquery_servidor166)
+# Tipo de sincronização (normal, bigquery ou bigquery_servidor166)
 TIPO="${1:-normal}"
 
 # Validar tipo
-if [ "$TIPO" != "normal" ] && [ "$TIPO" != "cloudsql" ] && [ "$TIPO" != "bigquery" ] && [ "$TIPO" != "bigquery_servidor166" ]; then
-    echo "❌ ERRO: Tipo inválido. Use 'normal', 'cloudsql', 'bigquery' ou 'bigquery_servidor166'" >&2
-    echo "Uso: $0 [normal|cloudsql|bigquery|bigquery_servidor166]" >&2
+if [ "$TIPO" != "normal" ] && [ "$TIPO" != "bigquery" ] && [ "$TIPO" != "bigquery_servidor166" ]; then
+    echo "❌ ERRO: Tipo inválido. Use 'normal', 'bigquery' ou 'bigquery_servidor166'" >&2
+    echo "Uso: $0 [normal|bigquery|bigquery_servidor166]" >&2
     exit 1
 fi
 
@@ -52,11 +53,7 @@ WORK_DIR="$PROJECT_ROOT"
 LOG_DIR="$WORK_DIR/logs"
 
 # Configurar script e log baseado no tipo
-if [ "$TIPO" = "cloudsql" ]; then
-    SCRIPT_PATH="$PROJECT_ROOT/scripts/cloudsql/sincronizar_para_cloudsql.py"
-    LOG_FILE="$LOG_DIR/cloudsql_$(date +%Y%m%d_%H%M%S).log"
-    TIPO_DESCRICAO="Cloud SQL"
-elif [ "$TIPO" = "bigquery" ]; then
+if [ "$TIPO" = "bigquery" ]; then
     SCRIPT_PATH="$PROJECT_ROOT/scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py"
     LOG_FILE="$LOG_DIR/bigquery_$(date +%Y%m%d_%H%M%S).log"
     TIPO_DESCRICAO="BigQuery (NIMBUS - Pluviométricos)"

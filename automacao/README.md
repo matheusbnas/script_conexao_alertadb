@@ -13,10 +13,7 @@ Scripts para executar sincronização automaticamente via cron e Prefect.
 # Servidor 166
 python scripts/servidor166/carregar_pluviometricos_historicos.py
 
-# Cloud SQL
-python scripts/cloudsql/carregar_para_cloudsql_inicial.py
-
-# BigQuery
+# BigQuery (opcional)
 python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
 ```
 
@@ -24,9 +21,6 @@ python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
 ```bash
 # Sincronização normal (servidor 166)
 ./configurar_cron.sh normal
-
-# Sincronização Cloud SQL
-./configurar_cron.sh cloudsql
 
 # Sincronização BigQuery
 ./configurar_cron.sh bigquery
@@ -52,7 +46,7 @@ prefect cloud login
 
 # 3. Criar work pool no Prefect Cloud UI
 # 4. Deploy do workflow
-prefect deploy scripts/bigquery/prefect_workflow_bigquery.py:sincronizacao_incremental_flow --pool seu-work-pool
+prefect deploy scripts/prefect/prefect_workflow_combinado.py:sincronizacao_incremental_flow --pool seu-work-pool
 
 # 5. Iniciar agent em servidor dedicado
 prefect agent start seu-work-pool
@@ -74,11 +68,11 @@ pip install prefect prefect-gcp
 # 2. Configurar servidor local
 ./configurar_prefect.sh
 
-# 3. Iniciar servidor (em terminal separado)
-prefect server start
+# 3. Iniciar via Docker Compose
+docker compose up -d
 
-# 4. Executar workflow (em outro terminal)
-python scripts/bigquery/prefect_workflow_bigquery.py
+# 4. Ou executar workflow diretamente
+python scripts/prefect/prefect_workflow_combinado.py
 ```
 
 **📚 Documentação:** [../docs/PREFECT_README.md](../docs/PREFECT_README.md)
@@ -88,7 +82,7 @@ python scripts/bigquery/prefect_workflow_bigquery.py
 ## 📋 Scripts Disponíveis
 
 ### Cron
-- **cron.sh** - Script unificado de execução (aceita: `normal`, `cloudsql`, `bigquery`, `bigquery_servidor166`)
+- **cron.sh** - Script unificado de execução (aceita: `normal`, `bigquery`, `bigquery_servidor166`)
 - **configurar_cron.sh** - Configuração automática do cron
 
 ### Prefect
@@ -99,6 +93,6 @@ python scripts/bigquery/prefect_workflow_bigquery.py
 
 ## 📚 Documentação Completa
 
-- [Configurar Cron](../docs/CONFIGURAR_CRON.md) - Guia completo de configuração
-- [Prefect Workflow](../docs/PREFECT_README.md) - Guia do Prefect
+- [Automação Guia Completo](../docs/AUTOMACAO_GUIA_COMPLETO.md) - Guia completo de configuração
+- [Prefect](../docs/PREFECT_README.md) - Guia do Prefect
 - [README Principal](../README.md)
