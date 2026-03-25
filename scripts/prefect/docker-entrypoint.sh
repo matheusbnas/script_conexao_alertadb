@@ -34,7 +34,7 @@ case "$1" in
         wait_for_service "$DB_ORIGEM_HOST" "${DB_ORIGEM_PORT:-5432}" 30 || true
 
         echo "🚀 Iniciando serviço Prefect..."
-        exec python scripts/prefect/prefect_service.py --workflow "${PREFECT_WORKFLOW:-combinado}" --intervalo "${PREFECT_INTERVALO:-5}"
+        exec python scripts/prefect/service.py --workflow "${PREFECT_WORKFLOW:-combinado}" --intervalo "${PREFECT_INTERVALO:-5}"
         ;;
     prefect-server)
         echo "🚀 Iniciando servidor Prefect..."

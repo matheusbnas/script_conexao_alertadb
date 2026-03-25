@@ -46,7 +46,7 @@ prefect cloud login
 
 # 3. Criar work pool no Prefect Cloud UI
 # 4. Deploy do workflow
-prefect deploy scripts/prefect/prefect_workflow_combinado.py:sincronizacao_incremental_flow --pool seu-work-pool
+prefect deploy --name sincronizacao-bigquery-combinada   # usa prefect.yaml na raiz
 
 # 5. Iniciar agent em servidor dedicado
 prefect agent start seu-work-pool
@@ -72,7 +72,7 @@ pip install prefect prefect-gcp
 docker compose up -d
 
 # 4. Ou executar workflow diretamente
-python scripts/prefect/prefect_workflow_combinado.py
+python scripts/prefect/flows.py --run-once
 ```
 
 **📚 Documentação:** [../docs/PREFECT_README.md](../docs/PREFECT_README.md)

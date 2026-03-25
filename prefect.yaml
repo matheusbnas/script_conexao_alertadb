@@ -1,0 +1,85 @@
+# ============================================================================
+# prefect.yaml — Definição de Deployments Prefect v3
+# ============================================================================
+#
+# Este arquivo centraliza a configuração de todos os deployments do projeto.
+# É a forma recomendada pelo Prefect v3 para definir agendamentos e parâmetros
+# em vez de espalhar essa lógica nos scripts Python.
+#
+# Como usar:
+#
+#   # Deploy de todos os workflows de uma vez
+#   prefect deploy --all
+#
+#   # Deploy de um workflow específico
+#   prefect deploy --name sincronizacao-bigquery-combinada
+#
+# Referência: https://docs.prefect.io/v3/how-to-guides/deployments/run-deployments
+# ============================================================================
+
+name: nimbus-bigquery-sync
+prefect-version: "3.x"
+
+build: null
+push: null
+
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: "."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deployments
+# ─────────────────────────────────────────────────────────────────────────────
+deployments:
+
+  # ---------------------------------------------------------------------------
+  # Workflow COMBINADO (pluviométricos + meteorológicos em um único deployment)
+  # Ideal quando há limite de deployments no Prefect Cloud (plano gratuito).
+  # ---------------------------------------------------------------------------
+  - name: sincronizacao-bigquery-combinada
+    entrypoint: scripts/prefect/flows.py:sincronizacao_combinada_flow
+    description: >
+      Sincronização incremental combinada (pluviométricos + meteorológicos)
+      do NIMBUS para o Google BigQuery.
+    tags:
+      - bigquery
+      - nimbus
+      - combinado
+    schedule:
+      interval: 300              # a cada 5 minutos
+      anchor_date: "2024-01-01T00:00:00"
+      timezone: America/Sao_Paulo
+
+  # ---------------------------------------------------------------------------
+  # Workflow PLUVIOMÉTRICOS — deployment dedicado
+  # ---------------------------------------------------------------------------
+  - name: sincronizacao-bigquery-pluviometricos
+    entrypoint: scripts/prefect/flows.py:sincronizacao_pluviometricos_flow
+    description: >
+      Sincronização incremental de dados pluviométricos do NIMBUS para
+      o Google BigQuery (tabela: pluviometricos).
+    tags:
+      - bigquery
+      - nimbus
+      - pluviometricos
+    schedule:
+      interval: 300
+      anchor_date: "2024-01-01T00:00:00"
+      timezone: America/Sao_Paulo
+
+  # ---------------------------------------------------------------------------
+  # Workflow METEOROLÓGICOS — deployment dedicado
+  # ---------------------------------------------------------------------------
+  - name: sincronizacao-bigquery-meteorologicos
+    entrypoint: scripts/prefect/flows.py:sincronizacao_meteorologicos_flow
+    description: >
+      Sincronização incremental de dados meteorológicos do NIMBUS para
+      o Google BigQuery (tabela: meteorologicos).
+    tags:
+      - bigquery
+      - nimbus
+      - meteorologicos
+    schedule:
+      interval: 300
+      anchor_date: "2024-01-01T00:02:30"   # offset de 2.5 min em relação ao pluviométricos
+      timezone: America/Sao_Paulo
