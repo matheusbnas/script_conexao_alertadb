@@ -60,24 +60,32 @@ chmod +x configurar_cron.sh cron.sh
 
 ```
 scripts/
-├── servidor166/          # Scripts para máquina virtual (servidor 166)
+├── servidor166/          # Sincronização com o servidor 166 (alertadb_cor)
 │   ├── carregar_pluviometricos_historicos.py
 │   ├── sincronizar_pluviometricos_novos.py
 │   ├── validar_dados_pluviometricos.py
 │   ├── exportar_pluviometricos_parquet.py
 │   └── app.py            # API REST Flask
 │
-└── bigquery/             # Scripts para Google BigQuery
-    ├── exportar_pluviometricos_nimbus_bigquery.py
-    ├── exportar_pluviometricos_servidor166_bigquery.py
-    ├── exportar_meteorologicos_nimbus_bigquery.py
-    ├── sincronizar_pluviometricos_nimbus_bigquery.py
-    └── sincronizar_pluviometricos_servidor166_bigquery.py
+├── bigquery/             # Sincronização com o Google BigQuery
+│   ├── exportar_pluviometricos_nimbus_bigquery.py
+│   ├── exportar_meteorologicos_nimbus_bigquery.py
+│   ├── sincronizar_pluviometricos_nimbus_bigquery.py
+│   └── sincronizar_meteorologicos_nimbus_bigquery.py
+│
+└── prefect/              # Orquestração Prefect v3
+    ├── constants.py      # SQL queries, tabelas e defaults
+    ├── utils.py          # Helpers (execução de scripts, BigQuery)
+    ├── tasks.py          # Tasks (conexões, sync, stub IA LNCC)
+    ├── flows.py          # Flows de sincronização
+    ├── interval_manager.py
+    └── service.py        # Serviço contínuo (Docker/systemd)
 
 automacao/
 ├── cron.sh               # Execução automática
 └── configurar_cron.sh    # Configuração do cron
 
+prefect.yaml              # Deployments Prefect v3
 docs/                     # Documentação completa
 ```
 
@@ -107,10 +115,22 @@ docs/                     # Documentação completa
 ### BigQuery
 
 - **exportar_pluviometricos_nimbus_bigquery.py** - Carga inicial pluviométricos (NIMBUS)
-- **exportar_pluviometricos_servidor166_bigquery.py** - Carga inicial pluviométricos (servidor 166)
 - **exportar_meteorologicos_nimbus_bigquery.py** - Carga inicial meteorológicos (NIMBUS)
-- **sincronizar_pluviometricos_nimbus_bigquery.py** - Sincronização incremental pluviométricos (NIMBUS)
-- **sincronizar_pluviometricos_servidor166_bigquery.py** - Sincronização incremental pluviométricos (servidor 166)
+- **sincronizar_pluviometricos_nimbus_bigquery.py** - Sincronização incremental pluviométricos
+- **sincronizar_meteorologicos_nimbus_bigquery.py** - Sincronização incremental meteorológicos
+
+### Prefect (orquestração)
+
+```bash
+# Execução manual (uma vez, sem deployment)
+python scripts/prefect/flows.py --run-once
+
+# Execução contínua local (sem Docker)
+python scripts/prefect/service.py --workflow combinado --intervalo 5
+
+# Deploy via Prefect Cloud / servidor local
+prefect deploy --all   # usa prefect.yaml na raiz
+```
 
 ---
 
@@ -131,13 +151,23 @@ docs/                     # Documentação completa
 - `DB_DESTINO_USER` - Usuário
 - `DB_DESTINO_PASSWORD` - Senha
 
-### BigQuery (opcional)
+### BigQuery
 - `BIGQUERY_PROJECT_ID` - ID do projeto GCP
-- `BIGQUERY_DATASET_ID_NIMBUS` - Dataset para dados NIMBUS (padrão: alertadb_cor_raw)
-- `BIGQUERY_DATASET_ID_SERVIDOR166` - Dataset para dados servidor 166 (padrão: alertadb_166_raw)
-- `BIGQUERY_TABLE_ID` - Nome da tabela pluviométricos (padrão: pluviometricos)
-- `BIGQUERY_TABLE_ID_METEOROLOGICOS` - Nome da tabela meteorológicos (padrão: meteorologicos)
-- `BIGQUERY_CREDENTIALS_PATH` - Caminho para arquivo credentials.json (opcional)
+- `BIGQUERY_DATASET_ID_NIMBUS` - Dataset para dados NIMBUS (padrão: `alertadb_cor_raw`)
+- `BIGQUERY_TABLE_ID` - Nome da tabela pluviométricos (padrão: `pluviometricos`)
+- `BIGQUERY_TABLE_ID_METEOROLOGICOS` - Nome da tabela meteorológicos (padrão: `meteorologicos`)
+- Credenciais GCP: arquivo `credentials/credentials.json` (service account)
+
+### Prefect
+- `PREFECT_API_URL` - URL do servidor Prefect (deixe vazio para modo efêmero local)
+- `PREFECT_WORKFLOW` - Workflow Docker: `combinado`, `pluviometricos` ou `meteorologicos`
+- `PREFECT_INTERVALO` - Intervalo em minutos (padrão: `5`)
+
+### IA LNCC / Gypscie *(futuro)*
+- `GYPSCIE_API_URL` - Endpoint da API Gypscie
+- `GYPSCIE_API_KEY` - Chave de autenticação
+- `GYPSCIE_WORKFLOW_ID` - ID do workflow de predição
+- `GYPSCIE_ENVIRONMENT_ID` - ID do ambiente
 
 ---
 

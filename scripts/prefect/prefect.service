@@ -11,7 +11,7 @@ Environment="PATH=/usr/bin:/usr/local/bin:/usr/local/sbin"
 Environment="PYTHONIOENCODING=utf-8"
 
 # Executar o serviço Prefect
-ExecStart=/usr/bin/python3 /caminho/do/projeto/scripts/prefect/prefect_service.py --workflow combinado --intervalo 5
+ExecStart=/usr/bin/python3 /caminho/do/projeto/scripts/prefect/service.py --workflow combinado --intervalo 5
 
 # Reiniciar automaticamente em caso de falha
 Restart=always

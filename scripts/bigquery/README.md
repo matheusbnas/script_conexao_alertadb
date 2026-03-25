@@ -106,7 +106,7 @@ cd automacao
 prefect server start
 
 # Executar workflow (em outro terminal)
-python scripts/bigquery/prefect_workflow_bigquery.py
+python scripts/prefect/flows.py --run-once
 ```
 **Vantagens:** Interface web, detecção automática de erros, retry automático, logs estruturados  
 **Documentação:** [../../docs/PREFECT_README.md](../../docs/PREFECT_README.md)

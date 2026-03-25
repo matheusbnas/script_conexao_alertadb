@@ -129,13 +129,11 @@ prefect agent start bigquery-sync-pool
 ### Passo 5: Deploy do Workflow
 
 ```bash
-cd scripts/bigquery
+# Deploy de todos os workflows definidos no prefect.yaml (raiz do projeto)
+prefect deploy --all
 
-# Deploy do workflow
-prefect deploy prefect_workflow_bigquery.py:sincronizacao_incremental_flow \
-  --name sincronizacao-bigquery-incremental \
-  --pool bigquery-sync-pool \
-  --cron "*/5 * * * *"
+# Ou deploy individual
+prefect deploy --name sincronizacao-bigquery-combinada
 ```
 
 ### Passo 6: Configurar Agente (Apenas para Process)
@@ -157,18 +155,22 @@ prefect agent start bigquery-sync-pool
 O workflow está configurado para executar **a cada 5 minutos** automaticamente:
 
 ```bash
-python scripts/bigquery/prefect_workflow_bigquery.py
+python scripts/prefect/flows.py --run-once
 ```
 
-O processo ficará rodando e executando automaticamente conforme o agendamento.
+O processo executa o flow combinado (pluviométricos + meteorológicos) uma única vez.
 
 ### Executar Workflow Uma Vez (Teste)
 
-Edite o arquivo `scripts/bigquery/prefect_workflow_bigquery.py` e descomente:
+```bash
+# Flow combinado (padrão)
+python scripts/prefect/flows.py --run-once
 
-```python
-if __name__ == "__main__":
-    sincronizacao_incremental_flow()  # Executa uma vez
+# Apenas pluviométricos
+python scripts/prefect/flows.py --run-once --flow pluviometricos
+
+# Apenas meteorológicos
+python scripts/prefect/flows.py --run-once --flow meteorologicos
 ```
 
 ---
@@ -231,9 +233,11 @@ pip install prefect prefect-gcp
 
 ## 📚 Arquivos Relacionados
 
-- **Workflow:** `scripts/bigquery/prefect_workflow_bigquery.py`
-- **Script de sincronização:** `scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py`
-- **Script de exportação:** `scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py`
+- **Flows:** `scripts/prefect/flows.py`
+- **Tasks:** `scripts/prefect/tasks.py`
+- **Deployments:** `prefect.yaml` (raiz do projeto)
+- **Script de sincronização pluviométricos:** `scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py`
+- **Script de sincronização meteorológicos:** `scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py`
 - **Script de configuração:** `automacao/configurar_prefect.sh`
 
 ---

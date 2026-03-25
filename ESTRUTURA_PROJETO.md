@@ -34,14 +34,13 @@ projeto/
 │   │   └── README.md
 │   │
 │   └── prefect/                       # Orquestração Prefect
-│       ├── prefect_service.py         # Serviço principal em loop
-│       ├── prefect_workflow_combinado.py
-│       ├── prefect_workflow_pluviometricos.py
-│       ├── prefect_workflow_meteorologicos.py
-│       ├── prefect_helpers.py
-│       ├── prefect_common_tasks.py
-│       ├── prefect_interval_manager.py
-│       ├── docker-entrypoint.sh
+│       ├── constants.py               # SQL queries, tabelas e defaults
+│       ├── utils.py                   # Helpers (execução de scripts, BigQuery)
+│       ├── tasks.py                   # Tasks Prefect (conexões, sync, stub IA)
+│       ├── flows.py                   # Flows (pluviométricos, meteorológicos, combinado)
+│       ├── interval_manager.py        # Intervalo dinâmico entre execuções
+│       ├── service.py                 # Serviço em loop (Docker/systemd)
+│       ├── docker-entrypoint.sh       # Entrypoint Docker
 │       ├── prefect.service            # Unit systemd (template)
 │       └── README.md
 │
@@ -101,11 +100,13 @@ Scripts para o Google BigQuery:
 - **verificar_duplicatas_periodo.py** — diagnóstico de duplicatas
 
 ### `scripts/prefect/`
-Orquestração via Prefect (recomendado para BigQuery):
-- **prefect_service.py** — serviço em loop que dispara os workflows
-- **prefect_workflow_*.py** — flows Prefect para pluviométricos, meteorológicos e combinado
-- **prefect_helpers.py** — funções auxiliares (execução de scripts, parsing de erros)
-- **prefect_interval_manager.py** — intervalo dinâmico entre execuções
+Orquestração via Prefect v3 (recomendado para BigQuery):
+- **constants.py** — SQL queries, nomes de tabelas e valores padrão centralizados
+- **utils.py** — funções auxiliares (execução de scripts, verificação de BigQuery, lacunas)
+- **tasks.py** — tasks Prefect compartilhadas (conexões, sync, monitoramento, stub IA LNCC)
+- **flows.py** — flows `sincronizacao_pluviometricos_flow`, `sincronizacao_meteorologicos_flow` e `sincronizacao_combinada_flow`
+- **interval_manager.py** — cálculo de intervalo dinâmico baseado em tempo de execução
+- **service.py** — serviço em loop contínuo para Docker/systemd
 
 ### `setup/`
 Scripts de configuração inicial:

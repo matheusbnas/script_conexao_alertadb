@@ -42,6 +42,12 @@ services:
       - BIGQUERY_DATASET_ID_NIMBUS=${BIGQUERY_DATASET_ID_NIMBUS:-alertadb_cor_raw}
       - BIGQUERY_TABLE_ID=${BIGQUERY_TABLE_ID:-pluviometricos}
       - BIGQUERY_TABLE_ID_METEOROLOGICOS=${BIGQUERY_TABLE_ID_METEOROLOGICOS:-meteorologicos}
+
+      # Integração IA LNCC/Gypscie (futuro — deixar em branco até configurar)
+      - GYPSCIE_API_URL=${GYPSCIE_API_URL:-}
+      - GYPSCIE_API_KEY=${GYPSCIE_API_KEY:-}
+      - GYPSCIE_WORKFLOW_ID=${GYPSCIE_WORKFLOW_ID:-}
+      - GYPSCIE_ENVIRONMENT_ID=${GYPSCIE_ENVIRONMENT_ID:-}
     
     volumes:
       # Credenciais GCP
