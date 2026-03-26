@@ -21,15 +21,13 @@ Este guia explica como configurar o cron para executar automaticamente os script
 
 Antes de configurar o cron, certifique-se de que:
 
-1. ✅ **Carga inicial concluída**: 
-   - Para servidor 166: Executeu `carregar_pluviometricos_historicos.py`
-   - Para Cloud SQL: Executeu `carregar_para_cloudsql_inicial.py`
-   - Para BigQuery: Executeu `exportar_pluviometricos_nimbus_bigquery.py`
+1. ✅ **Carga inicial concluída**:
+   - Para servidor 166: Execute `carregar_pluviometricos_historicos.py`
+   - Para BigQuery: Execute `exportar_pluviometricos_nimbus_bigquery.py`
 2. ✅ **Tabela populada**: A tabela `pluviometricos` contém dados históricos
 3. ✅ **Arquivo .env configurado**: Todas as variáveis de ambiente estão corretas
-4. ✅ **Script testado manualmente**: 
+4. ✅ **Script testado manualmente**:
    - `sincronizar_pluviometricos_novos.py --once` (servidor 166)
-   - `sincronizar_para_cloudsql.py --once` (Cloud SQL)
    - `sincronizar_pluviometricos_nimbus_bigquery.py --once` (BigQuery)
 
 ---
@@ -53,10 +51,7 @@ Antes de configurar o cron, certifique-se de que:
    # Para sincronização normal (servidor 166)
    ./configurar_cron.sh normal
    # ou apenas: ./configurar_cron.sh
-   
-   # Para sincronização Cloud SQL
-   ./configurar_cron.sh cloudsql
-   
+
    # Para sincronização BigQuery
    ./configurar_cron.sh bigquery
    ```
@@ -78,10 +73,7 @@ O script irá:
    ```bash
    # Para sincronização normal (servidor 166)
    */5 * * * * /caminho/completo/para/automacao/cron.sh normal
-   
-   # Para sincronização Cloud SQL
-   */5 * * * * /caminho/completo/para/automacao/cron.sh cloudsql
-   
+
    # Para sincronização BigQuery
    */5 * * * * /caminho/completo/para/automacao/cron.sh bigquery
    ```
@@ -89,13 +81,10 @@ O script irá:
    **Exemplo:**
    ```bash
    # Normal
-   */5 * * * * /home/usuario/repos/testarconexao/automacao/cron.sh normal
-   
-   # Cloud SQL
-   */5 * * * * /home/usuario/repos/testarconexao/automacao/cron.sh cloudsql
-   
+   */5 * * * * /home/usuario/repos/script_conexao_alertadb/automacao/cron.sh normal
+
    # BigQuery
-   */5 * * * * /home/usuario/repos/testarconexao/automacao/cron.sh bigquery
+   */5 * * * * /home/usuario/repos/script_conexao_alertadb/automacao/cron.sh bigquery
    ```
 
 3. **Salve e feche o editor** (no vim: `:wq`, no nano: `Ctrl+X` e depois `Y`)
@@ -258,17 +247,14 @@ sudo systemctl start sync-pluviometricos.service
 
 ### Verificar Logs (Linux)
 
-Os logs são salvos em `logs/sincronizacao_YYYYMMDD_HHMMSS.log` ou `logs/cloudsql_YYYYMMDD_HHMMSS.log`:
+Os logs são salvos em `logs/sincronizacao_YYYYMMDD_HHMMSS.log`:
 
 ```bash
-# Ver último log criado
+# Ver últimos logs criados
 ls -lt logs/ | head -5
 
-# Ver conteúdo do último log
-tail -f logs/sincronizacao_*.log | tail -20
-
-# Ver logs Cloud SQL
-tail -f logs/cloudsql_*.log | tail -20
+# Acompanhar log em tempo real
+tail -f logs/sincronizacao_*.log
 ```
 
 ### Testar Execução Manual
@@ -278,11 +264,11 @@ Antes de confiar no cron, teste manualmente:
 ```bash
 cd /caminho/do/projeto
 
-# Teste sincronização normal
+# Teste sincronização normal (servidor 166)
 python3 scripts/servidor166/sincronizar_pluviometricos_novos.py --once
 
-# Teste sincronização Cloud SQL
-python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once
+# Teste sincronização BigQuery
+python3 scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
 ```
 
 ### Verificar Última Sincronização
@@ -356,12 +342,9 @@ Considere configurar alertas se:
 
 3. **Teste conexões manualmente:**
    ```bash
-   # Normal
+   # Normal (servidor 166)
    python3 scripts/servidor166/sincronizar_pluviometricos_novos.py --once
-   
-   # Cloud SQL
-   python3 scripts/cloudsql/sincronizar_para_cloudsql.py --once
-   
+
    # BigQuery
    python3 scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
    ```
@@ -435,10 +418,10 @@ Antes de considerar a configuração completa:
 ## 📚 Documentação Relacionada
 
 - [README.md](../README.md) - Documentação principal
-- [CLOUD_SQL_GUIA_COMPLETO.md](CLOUD_SQL_GUIA_COMPLETO.md) - Guia Cloud SQL
-- [BIGQUERY_GUIA_COMPLETO.md](BIGQUERY_GUIA_COMPLETO.md) - Guia BigQuery
+- [BIGQUERY_GUIA_COMPLETO.md](BIGQUERY_GUIA_COMPLETO.md) - Guia BigQuery completo
+- [PREFECT_GUIA_COMPLETO.md](PREFECT_GUIA_COMPLETO.md) - Guia Prefect (Cloud, Docker, local)
 
 ---
 
-**Última atualização:** 2025
+**Última atualização:** 2026
 

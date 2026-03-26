@@ -93,12 +93,13 @@ docs/                     # Documentação completa
 
 ## 📚 Documentação
 
-- [Scripts](scripts/README.md) - Documentação dos scripts
-- [BigQuery](scripts/bigquery/README.md) - Documentação dos scripts BigQuery
+- [Scripts BigQuery](scripts/bigquery/README.md) - Documentação dos scripts BigQuery
 - [Automação](automacao/README.md) - Configuração de cron e Prefect
-- [BigQuery Guia](docs/BIGQUERY_GUIA_COMPLETO.md) - Guia completo BigQuery
-- [Prefect](docs/PREFECT_README.md) - Guia do Prefect
-- [API REST](docs/GUIA_USO_API.md) - Documentação da API
+- [BigQuery — Guia Completo](docs/BIGQUERY_GUIA_COMPLETO.md) - Setup, queries, schema, troubleshooting
+- [BigQuery — Compartilhar Acesso](docs/BIGQUERY_COMPARTILHAR_ACESSO.md) - Conceder acesso (LNCC/rj-cor)
+- [Prefect — Guia Completo](docs/PREFECT_GUIA_COMPLETO.md) - Cloud, Docker e local
+- [API e Dashboard](docs/API_E_DASHBOARD.md) - API REST Flask e dashboard web
+- [Automação — Guia Completo](docs/AUTOMACAO_GUIA_COMPLETO.md) - Cron, systemd, APScheduler
 
 ---
 

@@ -635,5 +635,81 @@ Para conceder acesso de **somente leitura** (consulta) no BigQuery para clientes
 
 ---
 
-**Última atualização:** 2025
+## 🔍 Referência Técnica — Schema, Timestamps e Inconsistências
+
+### Schema da tabela `pluviometricos`
+
+```sql
+CREATE TABLE pluviometricos (
+    dia_utc    TIMESTAMP NOT NULL,   -- hora da leitura convertida para UTC
+    m05        FLOAT64,              -- acumulado 5 min (mm)
+    m10        FLOAT64,
+    m15        FLOAT64,
+    h01        FLOAT64,
+    h04        FLOAT64,
+    h24        FLOAT64,
+    h96        FLOAT64,
+    estacao    STRING,
+    estacao_id INTEGER NOT NULL
+)
+PARTITION BY DATE(dia_utc);
+```
+
+> **Nota:** o campo é `dia_utc` (UTC). Para exibir no horário de Brasília:
+> ```sql
+> SELECT DATETIME(dia_utc, "America/Sao_Paulo") AS dia_brasil
+> FROM `alertadb-cor.alertadb_cor_raw.pluviometricos`
+> ```
+
+### Por que a coluna é TIMESTAMP (não STRING)?
+
+O script de exportação usa **exatamente a mesma query** do servidor 166, com `DISTINCT ON` e conversão de timezone para UTC. Isso garante:
+
+- Valores idênticos entre servidor 166 e BigQuery
+- Particionamento eficiente por data (`PARTITION BY DATE(dia_utc)`)
+- Compatibilidade com funções de data do BigQuery
+
+### Inconsistências ao comparar NIMBUS × BigQuery
+
+Se comparações diretas retornam valores diferentes, a causa quase sempre é a query usada no NIMBUS.
+
+**Query CORRETA** (igual ao script de exportação):
+
+```sql
+SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
+    el."horaLeitura" AS "Dia",
+    elc.m05, elc.m10, elc.m15, elc.h01, elc.h04, elc.h24, elc.h96,
+    ee.nome AS "Estacao",
+    el.estacao_id
+FROM public.estacoes_leitura AS el
+JOIN public.estacoes_leiturachuva AS elc ON elc.leitura_id = el.id
+JOIN public.estacoes_estacao AS ee ON ee.id = el.estacao_id
+ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
+```
+
+**Por que `DISTINCT ON` é necessário?**
+
+O NIMBUS pode conter múltiplos registros com o mesmo `horaLeitura` e `estacao_id` (correções ou duplicatas). O `DISTINCT ON ... ORDER BY id DESC` garante que sempre o registro com **maior ID** (mais recente) seja usado — o mesmo critério do script.
+
+Sem `DISTINCT ON`, queries diretas podem retornar registros diferentes, causando divergências aparentes.
+
+**Verificar duplicatas no NIMBUS:**
+
+```sql
+SELECT
+    el."horaLeitura",
+    el.estacao_id,
+    COUNT(*) AS qtd,
+    ARRAY_AGG(el.id ORDER BY el.id DESC) AS ids
+FROM public.estacoes_leitura AS el
+WHERE el."horaLeitura" >= '2024-01-01'
+  AND el.estacao_id = 1
+GROUP BY el."horaLeitura", el.estacao_id
+HAVING COUNT(*) > 1
+ORDER BY el."horaLeitura" DESC;
+```
+
+---
+
+**Última atualização:** 2026
 
