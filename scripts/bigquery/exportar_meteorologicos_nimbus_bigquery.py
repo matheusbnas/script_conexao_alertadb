@@ -231,7 +231,7 @@ def obter_schema_meteorologicos():
     """Retorna schema do BigQuery para tabela meteorologicos."""
     return [
         bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ NOT NULL do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso horário."),
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="NULLABLE", description="Data e hora da medição em horário local de São Paulo (America/Sao_Paulo), sem informação de timezone. Representa o mesmo instante de dia_utc convertido para o fuso de SP."),
+        bigquery.SchemaField("dia", "DATETIME", mode="NULLABLE", description="Data e hora local de São Paulo (America/Sao_Paulo), sem timezone, para leitura operacional. Derivada de dia_utc convertido para o fuso de SP."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato do banco original da NIMBUS (ex: 2009-02-16 02:12:20.000 -0300)"),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone original (ex: -0300 para horário padrão do Brasil, -0200 para horário de verão)"),
         bigquery.SchemaField("estacao", "STRING", mode="NULLABLE", description="Nome da estação meteorológica"),

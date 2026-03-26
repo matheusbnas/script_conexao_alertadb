@@ -642,6 +642,9 @@ Para conceder acesso de **somente leitura** (consulta) no BigQuery para clientes
 ```sql
 CREATE TABLE pluviometricos (
     dia_utc    TIMESTAMP NOT NULL,   -- hora da leitura convertida para UTC
+    dia        DATETIME,             -- hora local de São Paulo (sem timezone)
+    dia_original STRING,             -- timestamp original com offset SP (-0300/-0200)
+    utc_offset STRING,               -- offset UTC do horário local
     m05        FLOAT64,              -- acumulado 5 min (mm)
     m10        FLOAT64,
     m15        FLOAT64,
@@ -655,19 +658,39 @@ CREATE TABLE pluviometricos (
 PARTITION BY DATE(dia_utc);
 ```
 
+### Schema da tabela `meteorologicos`
+
+```sql
+CREATE TABLE meteorologicos (
+    dia_utc       TIMESTAMP NOT NULL,   -- hora da leitura convertida para UTC
+    dia           DATETIME,             -- hora local de São Paulo (sem timezone)
+    dia_original  STRING,               -- timestamp original com offset SP (-0300/-0200)
+    utc_offset    STRING,               -- offset UTC do horário local
+    estacao       STRING,
+    estacao_id    INTEGER NOT NULL,
+    temperatura   FLOAT64,
+    umidade       FLOAT64,
+    pressao       FLOAT64,
+    velVento      FLOAT64,
+    dirVento      FLOAT64,
+    chuva         FLOAT64
+)
+PARTITION BY DATE(dia_utc);
+```
+
 > **Nota:** o campo é `dia_utc` (UTC). Para exibir no horário de Brasília:
 > ```sql
 > SELECT DATETIME(dia_utc, "America/Sao_Paulo") AS dia_brasil
 > FROM `alertadb-cor.alertadb_cor_raw.pluviometricos`
 > ```
 
-### Por que a coluna é TIMESTAMP (não STRING)?
+### Por que usamos `dia_utc` (TIMESTAMP) + `dia` (DATETIME)?
 
-O script de exportação usa **exatamente a mesma query** do servidor 166, com `DISTINCT ON` e conversão de timezone para UTC. Isso garante:
+Os scripts de exportação/sincronização usam a mesma lógica de origem (NIMBUS), com conversão explícita de timezone. Isso garante:
 
 - Valores idênticos entre servidor 166 e BigQuery
 - Particionamento eficiente por data (`PARTITION BY DATE(dia_utc)`)
-- Compatibilidade com funções de data do BigQuery
+- Leitura operacional simples em horário local (`dia` como `DATETIME`)
 
 ### Inconsistências ao comparar NIMBUS × BigQuery
 

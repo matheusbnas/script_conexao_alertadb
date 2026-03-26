@@ -296,7 +296,7 @@ def obter_schema_pluviometricos():
     """Retorna schema do BigQuery para tabela pluviometricos."""
     return [
         bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso. dia_original guarda o mesmo instante em formato legível com offset SP."),
-        bigquery.SchemaField("dia", "TIMESTAMP", mode="NULLABLE", description="Data e hora da medição em horário local de São Paulo (America/Sao_Paulo), sem informação de timezone. Representa o mesmo instante de dia_utc convertido para o fuso de SP."),
+        bigquery.SchemaField("dia", "DATETIME", mode="NULLABLE", description="Data e hora local de São Paulo (America/Sao_Paulo), sem timezone, para leitura operacional. Derivada de dia_utc convertido para o fuso de SP."),
         bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Mesmo instante que dia_utc, formatado como horário local de São Paulo com offset."),
         bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone de São Paulo (ex: -0300, -0200). Use com dia_original para referência em horário local."),
         bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),

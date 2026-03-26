@@ -158,6 +158,10 @@ prefect deploy --all   # usa prefect.yaml na raiz
 - `BIGQUERY_TABLE_ID` - Nome da tabela pluviométricos (padrão: `pluviometricos`)
 - `BIGQUERY_TABLE_ID_METEOROLOGICOS` - Nome da tabela meteorológicos (padrão: `meteorologicos`)
 - Credenciais GCP: arquivo `credentials/credentials.json` (service account)
+- Convenção de data/hora (pluviométricos e meteorológicos):
+  - `dia_utc` = `TIMESTAMP` em UTC (referência técnica para processamento)
+  - `dia` = `DATETIME` em horário local de São Paulo (sem timezone, para leitura operacional)
+  - `dia_original` = `STRING` com timestamp + offset original (`-0300`/`-0200`)
 
 ### Prefect
 - `PREFECT_API_URL` - URL do servidor Prefect (deixe vazio para modo efêmero local)
