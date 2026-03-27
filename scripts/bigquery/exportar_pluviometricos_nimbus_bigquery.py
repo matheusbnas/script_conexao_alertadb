@@ -205,9 +205,14 @@ SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
     elc.m10,
     elc.m15,
     elc.h01,
+    elc.h02,
+    elc.h03,
     elc.h04,
+    elc.h06,
+    elc.h12,
     elc.h24,
     elc.h96,
+    elc.mes,
     ee.nome AS "Estacao",
     el.estacao_id
 FROM public.estacoes_leitura AS el
@@ -229,9 +234,14 @@ def obter_schema_pluviometricos():
         bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("h01", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h02", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h03", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("h04", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h06", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h12", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("h24", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("h96", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("mes", "FLOAT64", mode="NULLABLE"),
         bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
     ]
@@ -541,7 +551,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
         
         # Converter colunas numéricas se existirem
-        colunas_numericas = ['m05', 'm10', 'm15', 'h01', 'h04', 'h24', 'h96']
+        colunas_numericas = ['m05', 'm10', 'm15', 'h01', 'h02', 'h03', 'h04', 'h06', 'h12', 'h24', 'h96', 'mes']
         for col in colunas_numericas:
             if col in chunk_df.columns:
                 chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')

@@ -44,14 +44,11 @@ python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py
 ### 4. Automação
 
 ```bash
-cd automacao
-chmod +x configurar_cron.sh cron.sh
+# Subir serviços Prefect + Docker
+docker compose up -d
 
-# Sincronização normal (servidor 166)
-./configurar_cron.sh normal
-
-# Sincronização BigQuery
-./configurar_cron.sh bigquery
+# Ver logs
+docker compose logs -f prefect-service
 ```
 
 ---
@@ -82,8 +79,7 @@ scripts/
     └── service.py        # Serviço contínuo (Docker/systemd)
 
 automacao/
-├── cron.sh               # Execução automática
-└── configurar_cron.sh    # Configuração do cron
+└── configurar_prefect.sh # Helper para configurar Prefect local
 
 prefect.yaml              # Deployments Prefect v3
 docs/                     # Documentação completa
@@ -99,7 +95,7 @@ docs/                     # Documentação completa
 - [BigQuery — Compartilhar Acesso](docs/BIGQUERY_COMPARTILHAR_ACESSO.md) - Conceder acesso (LNCC/rj-cor)
 - [Prefect — Guia Completo](docs/PREFECT_GUIA_COMPLETO.md) - Cloud, Docker e local
 - [API e Dashboard](docs/API_E_DASHBOARD.md) - API REST Flask e dashboard web
-- [Automação — Guia Completo](docs/AUTOMACAO_GUIA_COMPLETO.md) - Cron, systemd, APScheduler
+- [Automação — Guia Completo](docs/AUTOMACAO_GUIA_COMPLETO.md) - Prefect + Docker e operação
 
 ---
 
@@ -162,6 +158,7 @@ prefect deploy --all   # usa prefect.yaml na raiz
   - `dia_utc` = `TIMESTAMP` em UTC (referência técnica para processamento)
   - `dia` = `DATETIME` em horário local de São Paulo (sem timezone, para leitura operacional)
   - `dia_original` = `STRING` com timestamp + offset original (`-0300`/`-0200`)
+- Métricas de chuva exportadas (pluviométricos): `m05`, `m10`, `m15`, `h01`, `h02`, `h03`, `h04`, `h06`, `h12`, `h24`, `h96`, `mes`
 
 ### Prefect
 - `PREFECT_API_URL` - URL do servidor Prefect (deixe vazio para modo efêmero local)

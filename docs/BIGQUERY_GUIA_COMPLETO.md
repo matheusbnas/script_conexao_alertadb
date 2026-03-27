@@ -23,20 +23,13 @@ Guia completo para integração com Google BigQuery, incluindo configuração, c
 
 ### Opções de Integração
 
-**Opção 1: NIMBUS → BigQuery (Direto)** ⭐ RECOMENDADO
+**Opção principal: NIMBUS → BigQuery (Direto)** ⭐ RECOMENDADO
 - Exporta diretamente do NIMBUS para BigQuery
-- Mais rápido (menos camadas)
-- Script: `scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py`
-
-**Opção 2: Cloud SQL → BigQuery (Federated Queries)**
-- Consulta dados do Cloud SQL diretamente no BigQuery
-- Sem necessidade de copiar dados
-- Dados sempre atualizados
-
-**Opção 3: Cloud SQL → BigQuery (Exportação)**
-- Exporta dados do Cloud SQL para BigQuery
-- Dados em BigQuery (mais rápido para consultas)
-- Requer sincronização periódica
+- Scripts:
+  - `scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py`
+  - `scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py`
+  - `scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py`
+  - `scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py`
 
 ---
 
@@ -420,15 +413,20 @@ ORDER BY estacao_id;
 
 | Coluna | NIMBUS (Origem) | BigQuery (Destino) | Mudou? |
 |--------|-----------------|---------------------|--------|
-| `dia` | `horaLeitura` (TIMESTAMP WITH TIME ZONE) | `dia` (TIMESTAMP) | ✅ Nome padronizado |
+| `dia` | `horaLeitura` (TIMESTAMP WITH TIME ZONE) | `dia` (DATETIME, SP) | ✅ Nome padronizado |
 | `dia_original` | - | `dia_original` (STRING) | ✅ Novo (formato original com timezone) |
 | `m05` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `m10` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `m15` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `h01` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
+| `h02` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
+| `h03` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `h04` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
+| `h06` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
+| `h12` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `h24` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `h96` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
+| `mes` | NUMERIC(10,2) | FLOAT64 | ⚠️ Tipo diferente, mas valores iguais |
 | `estacao` | VARCHAR(150) | STRING | ✅ Equivalente |
 | `estacao_id` | INTEGER | INTEGER | ✅ Idêntico |
 
@@ -449,113 +447,23 @@ A coluna `dia_original` preserva o formato original do NIMBUS com timezone:
 
 ## ⏰ Automação
 
-### Sincronização Incremental Automática (Recomendado)
+### Fluxo oficial: Prefect + Docker
 
-Para manter os dados atualizados automaticamente a cada 5 minutos, use o script de sincronização incremental.
-
-#### Pré-requisitos
-
-1. **Carga inicial concluída**: Executeu `exportar_pluviometricos_nimbus_bigquery.py` com sucesso
-2. **Servidor Linux** com acesso ao banco Nimbus
-3. **Python 3.8+** instalado
-4. **Credenciais do GCP** configuradas (`credentials/credentials.json`)
-5. **Variáveis de ambiente** configuradas no `.env`
-
-#### Configuração Rápida
-
-1. **Testar o Script Manualmente**
-   ```bash
-   python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
-   ```
-
-2. **Configurar Cron Automaticamente**
-   ```bash
-   cd automacao
-   ./configurar_cron.sh bigquery
-   ```
-
-   Isso configurará o cron para executar a cada 5 minutos automaticamente.
-
-#### Configuração Manual
-
-1. **Editar crontab**
-   ```bash
-   crontab -e
-   ```
-
-2. **Adicionar linha para executar a cada 5 minutos**
-   ```bash
-   # Sincronização incremental BigQuery a cada 5 minutos
-   */5 * * * * /caminho/completo/para/automacao/cron.sh bigquery
-   ```
-
-### Exportação Completa Periódica (Opcional)
-
-Se preferir fazer exportação completa periódica ao invés de incremental:
-
-1. **Preparar o Ambiente**
-   ```bash
-   cd /caminho/para/script_conexao_alertadb
-   source .venv/bin/activate  # Se usar ambiente virtual
-   pip install -r requirements.txt
-   ```
-
-2. **Testar o Script Manualmente**
-   ```bash
-   python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
-   ```
-
-3. **Configurar Cron**
-   ```bash
-   crontab -e
-   ```
-
-4. **Adicionar Linha para Executar Diariamente às 2h**
-   ```bash
-   # Exportar dados NIMBUS → BigQuery diariamente às 2h (completo)
-   0 2 * * * cd /caminho/para/script_conexao_alertadb && /caminho/para/python3 scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py >> /var/log/bigquery_export.log 2>&1
-   ```
-
-   **Ou executar a cada 6 horas:**
-   ```bash
-   # Exportar dados NIMBUS → BigQuery a cada 6 horas (completo)
-   0 */6 * * * cd /caminho/para/script_conexao_alertadb && /caminho/para/python3 scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py >> /var/log/bigquery_export.log 2>&1
-   ```
-
-### Formato Cron
-
-```
-* * * * * comando
-│ │ │ │ │
-│ │ │ │ └─── Dia da semana (0-7, 0 e 7 = domingo)
-│ │ │ └───── Mês (1-12)
-│ │ └─────── Dia do mês (1-31)
-│ └───────── Hora (0-23)
-└─────────── Minuto (0-59)
-```
-
-### Exemplos de Agendamento
-
-| Cron | Descrição |
-|------|-----------|
-| `0 2 * * *` | Diariamente às 2h |
-| `0 */6 * * *` | A cada 6 horas |
-| `0 3 * * 0` | Semanalmente (domingo às 3h) |
-| `0 0 1 * *` | Mensalmente (dia 1 às 0h) |
-| `*/30 * * * *` | A cada 30 minutos |
-
-### Verificar Logs
+Para manter os dados atualizados automaticamente, use os serviços Prefect no Docker:
 
 ```bash
-# Ver logs em tempo real
-tail -f /var/log/bigquery_export.log
-
-# Ver últimas 100 linhas
-tail -n 100 /var/log/bigquery_export.log
-
-# Procurar erros
-grep -i error /var/log/bigquery_export.log
+docker compose up -d
+docker compose logs -f prefect-service
 ```
+
+Se quiser execução manual pontual:
+
+```bash
+python scripts/prefect/flows.py --run-once
+```
+
+Guia operacional completo:
+- [PREFECT_GUIA_COMPLETO.md](PREFECT_GUIA_COMPLETO.md)
 
 ---
 
@@ -649,9 +557,14 @@ CREATE TABLE pluviometricos (
     m10        FLOAT64,
     m15        FLOAT64,
     h01        FLOAT64,
+    h02        FLOAT64,
+    h03        FLOAT64,
     h04        FLOAT64,
+    h06        FLOAT64,
+    h12        FLOAT64,
     h24        FLOAT64,
     h96        FLOAT64,
+    mes        FLOAT64,
     estacao    STRING,
     estacao_id INTEGER NOT NULL
 )
@@ -701,7 +614,7 @@ Se comparações diretas retornam valores diferentes, a causa quase sempre é a 
 ```sql
 SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
     el."horaLeitura" AS "Dia",
-    elc.m05, elc.m10, elc.m15, elc.h01, elc.h04, elc.h24, elc.h96,
+    elc.m05, elc.m10, elc.m15, elc.h01, elc.h02, elc.h03, elc.h04, elc.h06, elc.h12, elc.h24, elc.h96, elc.mes,
     ee.nome AS "Estacao",
     el.estacao_id
 FROM public.estacoes_leitura AS el

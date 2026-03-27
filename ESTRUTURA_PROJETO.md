@@ -49,10 +49,7 @@ projeto/
 │   └── etl.py                         # ETL simples origem → destino
 │
 ├── automacao/                         # Scripts de automação
-│   ├── cron.sh                        # Execução via cron (normal|bigquery|bigquery_servidor166)
-│   ├── configurar_cron.sh             # Configuração do crontab
 │   ├── configurar_prefect.sh          # Configuração do Prefect local
-│   ├── monitor_prefect_pluvio.sh      # Monitor do container Prefect
 │   └── README.md
 │
 ├── tests/                             # Scripts de diagnóstico
@@ -63,14 +60,10 @@ projeto/
 │
 ├── docs/                              # Documentação
 │   ├── AUTOMACAO_GUIA_COMPLETO.md
+│   ├── API_E_DASHBOARD.md
 │   ├── BIGQUERY_GUIA_COMPLETO.md
-│   ├── BIGQUERY_AJUSTES_TIMESTAMP.md
 │   ├── BIGQUERY_COMPARTILHAR_ACESSO.md
-│   ├── BIGQUERY_INCONSISTENCIAS.md
-│   ├── PREFECT_README.md
-│   ├── PREFECT_DOCKER_TEMPO_REAL_GCP.md
-│   ├── GUIA_USO_API.md
-│   └── COMO_RODAR_DASHBOARD.md
+│   └── PREFECT_GUIA_COMPLETO.md
 │
 ├── exports/                           # Arquivos exportados (criado automaticamente)
 │   └── pluviometricos_YYYY.parquet
@@ -115,10 +108,8 @@ Scripts de configuração inicial:
 
 ### `automacao/`
 Scripts de automação:
-- **cron.sh** — execução via cron; aceita `normal`, `bigquery` ou `bigquery_servidor166`
-- **configurar_cron.sh** — adiciona entrada no crontab automaticamente
-- **configurar_prefect.sh** — configura Prefect para uso com servidor local
-- **monitor_prefect_pluvio.sh** — monitora container Docker e reinicia se necessário
+- **configurar_prefect.sh** — configura Prefect para uso com servidor local (`PREFECT_API_URL`)
+- **README.md** — instruções de operação para fluxo Prefect + Docker
 
 ### `tests/`
 Scripts de diagnóstico e verificação pontual:
@@ -139,8 +130,7 @@ Scripts de diagnóstico e verificação pontual:
    └── python scripts/servidor166/carregar_pluviometricos_historicos.py
 
 3. Automação (escolha uma opção)
-   ├── Cron:    automacao/configurar_cron.sh normal
-   └── Prefect: docker compose up -d   (ver docs/PREFECT_README.md)
+   └── Prefect + Docker: docker compose up -d   (ver docs/PREFECT_GUIA_COMPLETO.md)
 ```
 
 ---

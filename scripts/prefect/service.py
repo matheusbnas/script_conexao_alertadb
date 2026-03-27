@@ -21,16 +21,21 @@ import argparse
 import json
 import os
 import signal
+import smtplib
 import subprocess
 import sys
 import time
 import traceback
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Dict, Optional
 
+from dotenv import load_dotenv
+
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
+load_dotenv(dotenv_path=project_root / '.env')
 
 from interval_manager import calcular_intervalo_ideal
 
@@ -43,6 +48,7 @@ estado_servico = {
     'ultima_execucao': None,
     'intervalo_atual_minutos': 5,
     'execucoes_consecutivas_rapidas': 0,
+    'ultimo_alerta_erro_epoch': None,
     'arquivo_estado': Path(
         os.getenv(
             'PREFECT_STATE_FILE',
@@ -79,9 +85,81 @@ def salvar_estado():
             json.dump({
                 'ultima_execucao': ultima_execucao_str,
                 'intervalo_atual_minutos': estado_servico['intervalo_atual_minutos'],
+                'ultimo_alerta_erro_epoch': estado_servico.get('ultimo_alerta_erro_epoch'),
             }, f, indent=2)
     except Exception as e:
         print(f"⚠️  Erro ao salvar estado: {e}")
+
+
+def _destinatarios_alerta() -> list[str]:
+    """Obtém destinatários de alerta a partir de variáveis de ambiente.
+
+    Aceita:
+      - PREFECT_ALERT_EMAIL_TO
+      - ALERT_EMAIL_TO
+
+    Formato: e-mails separados por vírgula.
+    """
+    raw = (os.getenv('PREFECT_ALERT_EMAIL_TO') or os.getenv('ALERT_EMAIL_TO') or '').strip()
+    if not raw:
+        return []
+    return [email.strip() for email in raw.split(',') if email.strip()]
+
+
+def enviar_alerta_falha_email(workflow_tipo: str, resultado: Dict) -> bool:
+    """Envia e-mail de alerta quando execução do workflow falha."""
+    destinatarios = _destinatarios_alerta()
+    if not destinatarios:
+        print("ℹ️  Alerta por e-mail desativado (PREFECT_ALERT_EMAIL_TO não configurado).")
+        return False
+
+    smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(os.getenv('SMTP_PORT', '587'))
+    smtp_user = os.getenv('SMTP_USER', '').strip()
+    smtp_password = os.getenv('SMTP_APP_PASSWORD', '').strip()
+    alert_from = (os.getenv('ALERT_FROM') or smtp_user).strip()
+    use_starttls = os.getenv('SMTP_STARTTLS', 'true').strip().lower() in {'1', 'true', 'yes', 'y'}
+
+    if not smtp_user or not smtp_password or not alert_from:
+        print("⚠️  Alerta por e-mail não enviado: SMTP_USER/SMTP_APP_PASSWORD/ALERT_FROM não configurados.")
+        return False
+
+    assunto = f"[ALERTA PREFECT] Falha na sincronização BigQuery ({workflow_tipo})"
+    stdout_tail = (resultado.get('stdout') or '').splitlines()[-30:]
+    stderr_tail = (resultado.get('stderr') or '').splitlines()[-30:]
+
+    corpo = f"""
+Falha detectada no serviço Prefect de sincronização.
+
+Workflow: {workflow_tipo}
+Data/hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Return code: {resultado.get('return_code')}
+Tempo (s): {resultado.get('tempo_segundos')}
+
+--- Últimas linhas de stdout ---
+{chr(10).join(stdout_tail) if stdout_tail else '(stdout vazio)'}
+
+--- Últimas linhas de stderr ---
+{chr(10).join(stderr_tail) if stderr_tail else '(stderr vazio)'}
+""".strip()
+
+    msg = EmailMessage()
+    msg['Subject'] = assunto
+    msg['From'] = alert_from
+    msg['To'] = ', '.join(destinatarios)
+    msg.set_content(corpo)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            if use_starttls:
+                server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+        print(f"📧 Alerta de falha enviado para: {', '.join(destinatarios)}")
+        return True
+    except Exception as e:
+        print(f"⚠️  Falha ao enviar e-mail de alerta: {e}")
+        return False
 
 
 def handler_sinal(signum, frame):
@@ -198,6 +276,18 @@ def loop_servico(workflow_tipo: str, intervalo_inicial_minutos: int = 5):
 
             resultado     = executar_workflow(workflow_tipo)
             estado_servico['ultima_execucao'] = inicio_ciclo
+
+            # Alerta de falha por e-mail com cooldown para evitar spam
+            if not resultado.get('sucesso', False):
+                cooldown_min = int(os.getenv('PREFECT_ALERT_COOLDOWN_MINUTES', '30'))
+                agora_epoch = time.time()
+                ultimo_alerta = estado_servico.get('ultimo_alerta_erro_epoch')
+
+                if not ultimo_alerta or (agora_epoch - float(ultimo_alerta)) >= (cooldown_min * 60):
+                    enviado = enviar_alerta_falha_email(workflow_tipo, resultado)
+                    if enviado:
+                        estado_servico['ultimo_alerta_erro_epoch'] = agora_epoch
+                        salvar_estado()
 
             tempo_execucao         = resultado.get('tempo_segundos', 0)
             tempo_execucao_minutos = tempo_execucao / 60

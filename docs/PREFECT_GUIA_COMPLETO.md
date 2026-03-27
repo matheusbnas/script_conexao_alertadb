@@ -236,6 +236,25 @@ python scripts/prefect/service.py --workflow combinado --intervalo 5
 
 ## 🛠️ Troubleshooting
 
+### Alertas por e-mail em caso de falha
+
+O `scripts/prefect/service.py` envia alerta automático por e-mail quando um workflow falha
+(com cooldown para evitar spam). Configure no `.env`:
+
+```env
+PREFECT_ALERT_EMAIL_TO=matheusbnas@gmail.com,matheus.bernardes@cor.rio
+PREFECT_ALERT_COOLDOWN_MINUTES=30
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=seu_email@gmail.com
+SMTP_APP_PASSWORD=sua_app_password
+ALERT_FROM=seu_email@gmail.com
+SMTP_STARTTLS=true
+```
+
+> Se `PREFECT_ALERT_EMAIL_TO` não estiver configurado, os alertas ficam desativados.
+
 ### Erro 401 Unauthorized (Prefect Cloud)
 
 ```bash

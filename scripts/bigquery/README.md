@@ -13,12 +13,14 @@ Scripts para exportar e sincronizar dados pluviométricos e meteorológicos para
 ##### `exportar_pluviometricos_nimbus_bigquery.py`
 - **Função:** Carga inicial completa de dados pluviométricos do NIMBUS para BigQuery
 - **Uso:** Executar uma vez para carregar todos os dados históricos
-- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
+- **Colunas de chuva:** `m05`, `m10`, `m15`, `h01`, `h02`, `h03`, `h04`, `h06`, `h12`, `h24`, `h96`, `mes`
+- **Colunas de data:** `dia_utc` (TIMESTAMP UTC), `dia` (DATETIME SP), `dia_original` (STRING com offset)
 
 ##### `sincronizar_pluviometricos_nimbus_bigquery.py`
 - **Função:** Sincronização incremental de dados pluviométricos do NIMBUS para BigQuery
-- **Uso:** Executar via cron a cada 5 minutos
-- **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
+- **Uso:** Executar via Prefect (flows.py / service.py)
+- **Colunas de chuva:** `m05`, `m10`, `m15`, `h01`, `h02`, `h03`, `h04`, `h06`, `h12`, `h24`, `h96`, `mes`
+- **Colunas de data:** `dia_utc` (TIMESTAMP UTC), `dia` (DATETIME SP), `dia_original` (STRING com offset)
 
 #### **Opção 2: Servidor 166 → BigQuery (Com Controle Administrativo)**
 
@@ -30,7 +32,7 @@ Scripts para exportar e sincronizar dados pluviométricos e meteorológicos para
 
 ##### `sincronizar_pluviometricos_servidor166_bigquery.py`
 - **Função:** Sincronização incremental de dados pluviométricos do servidor 166 para BigQuery
-- **Uso:** Executar via cron a cada 5 minutos
+- **Uso:** Executar manualmente sob demanda
 - **Vantagem:** Você tem controle total dos dados (admin do banco)
 - **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
 
@@ -65,18 +67,20 @@ Scripts para exportar e sincronizar dados pluviométricos e meteorológicos para
 
 ## 📊 Formato da Coluna `dia`
 
-**Todos os scripts usam TIMESTAMP no BigQuery:**
+**Padrão atual dos scripts NIMBUS → BigQuery:**
 
 ```
-Tipo no BigQuery: TIMESTAMP (UTC)
-Coluna adicional: dia_original (STRING) - formato exato da NIMBUS
+dia_utc: TIMESTAMP (UTC)
+dia: DATETIME (horário local de São Paulo, sem timezone)
+dia_original: STRING (formato original com offset: -0300/-0200)
 ```
 
 **Características:**
-- ✅ Coluna `dia`: TIMESTAMP em UTC (padrão BigQuery)
-- ✅ Coluna `dia_original`: STRING com formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
+- ✅ `dia_utc` como referência técnica e particionamento
+- ✅ `dia` em horário local SP para leitura operacional
+- ✅ `dia_original` com formato exato da NIMBUS (`2009-02-16 02:12:20.000 -0300`)
 - ✅ Preserva timezone original na coluna `dia_original`
-- ✅ Facilita consultas usando TIMESTAMP nativo do BigQuery
+- ✅ Facilita consultas operacionais sem conversão de fuso
 
 ---
 
@@ -94,7 +98,7 @@ python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
 python scripts/bigquery/exportar_pluviometricos_servidor166_bigquery.py
 ```
 
-### **🌧️ Dados Pluviométricos - Sincronização Incremental (Escolha uma opção):**
+### **🌧️ Dados Pluviométricos - Sincronização Incremental (Prefect recomendado):**
 
 #### Opção 1: Prefect (Recomendado - com monitoramento de erros)
 ```bash
@@ -109,26 +113,18 @@ prefect server start
 python scripts/prefect/flows.py --run-once
 ```
 **Vantagens:** Interface web, detecção automática de erros, retry automático, logs estruturados  
-**Documentação:** [../../docs/PREFECT_README.md](../../docs/PREFECT_README.md)
+**Documentação:** [../../docs/PREFECT_GUIA_COMPLETO.md](../../docs/PREFECT_GUIA_COMPLETO.md)
 
-#### Opção 2: NIMBUS → BigQuery (via Cron)
+#### Opção 2: NIMBUS → BigQuery (manual, fallback)
 ```bash
 # Testar manualmente
 python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
-
-# Configurar cron
-cd automacao
-./configurar_cron.sh bigquery
 ```
 
-#### Opção 3: Servidor 166 → BigQuery (via Cron)
+#### Opção 3: Servidor 166 → BigQuery (manual, fallback)
 ```bash
 # Testar manualmente
 python scripts/bigquery/sincronizar_pluviometricos_servidor166_bigquery.py --once
-
-# Configurar cron
-cd automacao
-./configurar_cron.sh bigquery_servidor166
 ```
 
 ### **🌤️ Dados Meteorológicos - Carga Inicial:**
@@ -192,7 +188,7 @@ BIGQUERY_TABLE_ID=pluviometricos
 - **Guia Completo:** [docs/BIGQUERY_GUIA_COMPLETO.md](../../docs/BIGQUERY_GUIA_COMPLETO.md)
 - **Compartilhar Acesso:** [docs/BIGQUERY_COMPARTILHAR_ACESSO.md](../../docs/BIGQUERY_COMPARTILHAR_ACESSO.md)
 - **Automação:** [docs/AUTOMACAO_GUIA_COMPLETO.md](../../docs/AUTOMACAO_GUIA_COMPLETO.md)
-- **Prefect Workflow:** [../../docs/PREFECT_README.md](../../docs/PREFECT_README.md)
+- **Prefect Workflow:** [../../docs/PREFECT_GUIA_COMPLETO.md](../../docs/PREFECT_GUIA_COMPLETO.md)
 
 ---
 
