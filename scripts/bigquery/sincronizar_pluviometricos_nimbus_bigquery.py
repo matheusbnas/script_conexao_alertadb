@@ -67,7 +67,6 @@ VANTAGENS:
 ═══════════════════════════════════════════════════════════════════════════
 """
 
-import psycopg2
 import pandas as pd
 from sqlalchemy import create_engine
 from google.cloud import bigquery
@@ -79,7 +78,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 import tempfile
 import gc
-import pytz
 
 # Configurar encoding UTF-8 para Windows (resolve problema com emojis)
 if sys.platform == 'win32':
@@ -147,18 +145,30 @@ def carregar_configuracoes():
 
 ORIGEM, BIGQUERY_CONFIG = carregar_configuracoes()
 
-def testar_conexao_nimbus():
-    """Testa conexão com NIMBUS."""
-    try:
-        conn = psycopg2.connect(**ORIGEM)
-        cur = conn.cursor()
-        cur.execute("SELECT 1;")
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"   ❌ NIMBUS: FALHA! Erro: {e}")
-        return False
+
+def obter_schema_pluviometricos():
+    """Mesmo schema de exportar_pluviometricos_nimbus_bigquery.py (tipos BQ explícitos no load Parquet)."""
+    return [
+        bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC."),
+        bigquery.SchemaField("dia", "DATETIME", mode="NULLABLE", description="Horário local de São Paulo (sem timezone)."),
+        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h01", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h02", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h03", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h04", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h06", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h12", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h24", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("h96", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("mes", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
+    ]
+
 
 def obter_ultima_sincronizacao_bigquery(client, dataset_id, table_id):
     """Obtém o último timestamp sincronizado do BigQuery (TIMESTAMP).
@@ -297,29 +307,6 @@ WHERE {where_clause}
 ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
 """
 
-def obter_schema_pluviometricos():
-    """Retorna schema do BigQuery para tabela pluviometricos."""
-    return [
-        bigquery.SchemaField("dia_utc", "TIMESTAMP", mode="REQUIRED", description="Data e hora da medição em UTC. Origem: TIMESTAMPTZ do NIMBUS convertido para UTC. O sufixo _utc deixa explícita a origem do fuso. dia_original guarda o mesmo instante em formato legível com offset SP."),
-        bigquery.SchemaField("dia", "DATETIME", mode="NULLABLE", description="Data e hora local de São Paulo (America/Sao_Paulo), sem timezone, para leitura operacional. Derivada de dia_utc convertido para o fuso de SP."),
-        bigquery.SchemaField("dia_original", "STRING", mode="NULLABLE", description="Data e hora no formato exato com timezone de SP (ex: 1997-01-02 11:08:40.000 -0300). Mesmo instante que dia_utc, formatado como horário local de São Paulo com offset."),
-        bigquery.SchemaField("utc_offset", "STRING", mode="NULLABLE", description="Offset UTC do timezone de São Paulo (ex: -0300, -0200). Use com dia_original para referência em horário local."),
-        bigquery.SchemaField("m05", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("m10", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("m15", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h01", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h02", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h03", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h04", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h06", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h12", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h24", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("h96", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("mes", "FLOAT64", mode="NULLABLE"),
-        bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
-    ]
-
 def sincronizar_incremental():
     """Sincroniza apenas dados novos do NIMBUS para BigQuery.
     
@@ -435,10 +422,9 @@ def sincronizar_incremental():
             print(f"   ⚠️  ATENÇÃO: Coletando {anos:.1f} anos de dados - isso pode demorar bastante!")
         
         query = query_dados_incrementais(ultima_sincronizacao_geral, ultimas_por_estacao)
-        
+        schema_pluviometricos = obter_schema_pluviometricos()
+
         # Processar e carregar - EXATAMENTE a mesma lógica do script de exportação
-        schema = obter_schema_pluviometricos()
-        
         inicio_query = datetime.now()
         chunksize = 10000
         total_registros = 0
@@ -471,14 +457,9 @@ def sincronizar_incremental():
                 if col in chunk_df.columns:
                     chunk_df = chunk_df.drop(columns=[col])
             
-            # Processar colunas: dia_utc (UTC), dia (horário local SP), dia_original (STRING em SP) e utc_offset (STRING)
+            # Mesma lógica que exportar_pluviometricos_nimbus_bigquery.py (4 colunas de tempo).
             def converter_para_utc_e_processar(dt):
-                """Converte timestamp e retorna (dia_utc, dia_local_sp, dia_original_str, utc_offset_str).
-                - dia_utc: timestamp em UTC (sem timezone) para o BigQuery
-                - dia_local_sp (dia): mesmo instante em horário local de São Paulo (America/Sao_Paulo), sem timezone
-                - dia_original: string com horário local de SP e offset (ex: "1997-01-02 11:08:40.000 -0300")
-                - utc_offset: offset UTC do timezone de SP (ex: "-0300" ou "-0200")
-                """
+                """Retorna (dia_utc, dia_local_sp, dia_original_str, utc_offset_str) — alinhado ao exportar."""
                 if pd.isna(dt):
                     return (None, None, None, None)
                 try:
@@ -514,9 +495,8 @@ def sincronizar_incremental():
                         timestamp_str += ".000"
                     dia_original_str = f"{timestamp_str} {utc_offset_str}"
                     
-                    # Armazenar em UTC no BigQuery (dia_utc)
+                    # dia_utc em UTC (sem timezone); dia = mesmo instante em SP sem tz (DATETIME no BQ)
                     dt_utc = dt_parsed.tz_convert('UTC').tz_localize(None) if dt_parsed.tz is not None else dt_parsed
-                    # Armazenar também o mesmo instante em horário local de São Paulo, sem timezone (dia)
                     dia_local_sp = dt_sp.tz_localize(None)
                     return (dt_utc, dia_local_sp, dia_original_str, utc_offset_str)
                 except Exception as e:
@@ -528,7 +508,10 @@ def sincronizar_incremental():
             chunk_df['dia'] = resultados.apply(lambda x: x[1])
             chunk_df['dia_original'] = resultados.apply(lambda x: x[2])
             chunk_df['utc_offset'] = resultados.apply(lambda x: x[3])
-            
+            # Alinhar tipos ao exportar: DATETIME no BQ = datetime64 sem tz (microssegundos)
+            if 'dia' in chunk_df.columns:
+                chunk_df['dia'] = pd.to_datetime(chunk_df['dia']).dt.floor('us')
+
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
             
@@ -624,12 +607,13 @@ def sincronizar_incremental():
         for i, parquet_file in enumerate(parquet_files, 1):
             print(f"   📤 Carregando arquivo {i}/{len(parquet_files)}: {parquet_file.name}...")
             file_job_config = bigquery.LoadJobConfig(
-                # Não passar schema - BigQuery infere do Parquet e permite atualização automática
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,  # Sempre APPEND na sincronização
+                # Mesmo contrato do exportar: schema explícito mapeia Parquet → DATETIME em `dia` (não só inferência).
+                schema=schema_pluviometricos,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                 source_format=bigquery.SourceFormat.PARQUET,
                 schema_update_options=[
                     bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION,
-                    bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION  # Permite INTEGER -> FLOAT64
+                    bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION,
                 ],
             )
             

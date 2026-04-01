@@ -303,37 +303,37 @@ def verificar_status_bigquery_tabela(credentials_path: Path, dataset_id: str, ta
                 'mensagem': f'Credenciais não encontradas em: {credentials_path}',
             }
 
-        try:
-            from prefect_gcp import GcpCredentials
-            from prefect_gcp.bigquery import BigQueryWarehouse
+        credentials = service_account.Credentials.from_service_account_file(
+            str(credentials_path),
+            scopes=["https://www.googleapis.com/auth/bigquery"],
+        )
+        project_id = os.getenv('BIGQUERY_PROJECT_ID') or credentials.project_id
+        client = bq_client.Client(credentials=credentials, project=project_id)
 
-            gcp_credentials = GcpCredentials(service_account_file=str(credentials_path))
-            with BigQueryWarehouse(gcp_credentials=gcp_credentials) as warehouse:
-                query = f"""
-                SELECT
-                    COUNT(*) AS total_registros,
-                    MIN(dia_utc) AS data_minima,
-                    MAX(dia_utc) AS data_maxima,
-                    COUNT(DISTINCT estacao_id) AS total_estacoes
-                FROM `{dataset_id}.{table_id}`
-                """
-                result = warehouse.fetch_one(query)
-                if result:
-                    return {
-                        'sucesso': True,
-                        'total_registros': result[0],
-                        'data_minima': str(result[1]),
-                        'data_maxima': str(result[2]),
-                        'total_estacoes': result[3],
-                    }
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"⚠️  Erro ao usar Prefect GCP: {e}")
-
+        query = f"""
+        SELECT
+            COUNT(*) AS total_registros,
+            MIN(dia_utc) AS data_minima,
+            MAX(dia_utc) AS data_maxima,
+            COUNT(DISTINCT estacao_id) AS total_estacoes
+        FROM `{project_id}.{dataset_id}.{table_id}`
+        """
+        result = client.query(query).result()
+        row = next(iter(result), None)
+        if row:
+            return {
+                'sucesso': True,
+                'total_registros': row.total_registros,
+                'data_minima': str(row.data_minima),
+                'data_maxima': str(row.data_maxima),
+                'total_estacoes': row.total_estacoes,
+            }
         return {
             'sucesso': True,
-            'mensagem': 'Verificação básica concluída (instale prefect-gcp para estatísticas detalhadas)',
+            'total_registros': 0,
+            'data_minima': None,
+            'data_maxima': None,
+            'total_estacoes': 0,
         }
 
     except Exception as e:

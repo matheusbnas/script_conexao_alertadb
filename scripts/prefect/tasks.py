@@ -107,14 +107,14 @@ def verificar_credenciais_gcp() -> bool:
 def sincronizar_pluviometricos() -> dict:
     """Executa a sincronização incremental de dados pluviométricos."""
     script_path = PROJECT_ROOT / SCRIPT_SYNC_PLUVIO
-    return executar_script_sincronizacao(script_path, Tabela.PLUVIOMETRICOS)
+    return executar_script_sincronizacao(script_path, Tabela.PLUVIOMETRICOS.value)
 
 
 @task(name="Sincronização Incremental Meteorológicos", log_prints=True, retries=2, retry_delay_seconds=60)
 def sincronizar_meteorologicos() -> dict:
     """Executa a sincronização incremental de dados meteorológicos."""
     script_path = PROJECT_ROOT / SCRIPT_SYNC_METEO
-    return executar_script_sincronizacao(script_path, Tabela.METEOROLOGICOS)
+    return executar_script_sincronizacao(script_path, Tabela.METEOROLOGICOS.value)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ def verificar_status_pluviometricos() -> dict:
     """Verifica o status da tabela pluviometricos no BigQuery."""
     dataset_id       = os.getenv('BIGQUERY_DATASET_ID_NIMBUS', BIGQUERY_DEFAULT_DATASET)
     credentials_path = PROJECT_ROOT / 'credentials' / 'credentials.json'
-    return verificar_status_bigquery_tabela(credentials_path, dataset_id, Tabela.PLUVIOMETRICOS)
+    return verificar_status_bigquery_tabela(credentials_path, dataset_id, Tabela.PLUVIOMETRICOS.value)
 
 
 @task(name="Verificar Status BigQuery Meteorológicos", log_prints=True)
@@ -134,7 +134,7 @@ def verificar_status_meteorologicos() -> dict:
     """Verifica o status da tabela meteorologicos no BigQuery."""
     dataset_id       = os.getenv('BIGQUERY_DATASET_ID_NIMBUS', BIGQUERY_DEFAULT_DATASET)
     credentials_path = PROJECT_ROOT / 'credentials' / 'credentials.json'
-    return verificar_status_bigquery_tabela(credentials_path, dataset_id, Tabela.METEOROLOGICOS)
+    return verificar_status_bigquery_tabela(credentials_path, dataset_id, Tabela.METEOROLOGICOS.value)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def verificar_lacunas_pluviometricos() -> dict:
     """Verifica se há dados pluviométricos no NIMBUS ainda não sincronizados."""
     dataset_id       = os.getenv('BIGQUERY_DATASET_ID_NIMBUS', BIGQUERY_DEFAULT_DATASET)
     credentials_path = PROJECT_ROOT / 'credentials' / 'credentials.json'
-    return verificar_lacunas_tabela(dataset_id, Tabela.PLUVIOMETRICOS, QUERY_NIMBUS_PLUVIO, credentials_path)
+    return verificar_lacunas_tabela(dataset_id, Tabela.PLUVIOMETRICOS.value, QUERY_NIMBUS_PLUVIO, credentials_path)
 
 
 @task(name="Verificar Lacunas Meteorológicos", log_prints=True)
@@ -154,7 +154,7 @@ def verificar_lacunas_meteorologicos() -> dict:
     """Verifica se há dados meteorológicos no NIMBUS ainda não sincronizados."""
     dataset_id       = os.getenv('BIGQUERY_DATASET_ID_NIMBUS', BIGQUERY_DEFAULT_DATASET)
     credentials_path = PROJECT_ROOT / 'credentials' / 'credentials.json'
-    return verificar_lacunas_tabela(dataset_id, Tabela.METEOROLOGICOS, QUERY_NIMBUS_METEO, credentials_path)
+    return verificar_lacunas_tabela(dataset_id, Tabela.METEOROLOGICOS.value, QUERY_NIMBUS_METEO, credentials_path)
 
 
 # ---------------------------------------------------------------------------

@@ -20,16 +20,24 @@ Execução manual:
 
 import os
 import sys
-
-# Habilita modo efêmero quando não há servidor Prefect disponível (ex: cron/teste local)
-if '--run-once' in sys.argv and not os.getenv("PREFECT_API_URL"):
-    os.environ["PREFECT_API_URL"] = ""
-    os.environ["PREFECT_SERVER_ALLOW_EPHEMERAL_MODE"] = "true"
-
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Carregar .env antes de importar Prefect e antes de decidir modo efêmero (--run-once).
+project_root = Path(__file__).parent.parent.parent
+load_dotenv(dotenv_path=project_root / '.env')
+
+# Docker: use PREFECT_API_URL=http://prefect-server:4200/api (servidor na mesma rede).
+# Não forçar PREFECT_API_URL vazio aqui: isso ativa o modo efêmero, que sobe um API server em
+# 127.0.0.1 dentro do container e costuma dar timeout ("ephemeral Prefect API server").
+# Para desenvolvimento local sem servidor, defina explicitamente:
+#   PREFECT_USE_EPHEMERAL=1
+if (os.getenv("PREFECT_USE_EPHEMERAL") or "").strip().lower() in ("1", "true", "yes"):
+    os.environ["PREFECT_API_URL"] = ""
+    os.environ["PREFECT_SERVER_ALLOW_EPHEMERAL_MODE"] = "true"
+
 from prefect import flow
 from prefect.exceptions import PrefectHTTPStatusError
 
@@ -46,9 +54,6 @@ from tasks import (
     verificar_status_meteorologicos,
     verificar_status_pluviometricos,
 )
-
-project_root = Path(__file__).parent.parent.parent
-load_dotenv(dotenv_path=project_root / '.env')
 
 
 # ---------------------------------------------------------------------------
