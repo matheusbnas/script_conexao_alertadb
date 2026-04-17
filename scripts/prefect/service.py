@@ -58,11 +58,34 @@ estado_servico = {
 }
 
 
+def _resolver_arquivo_estado() -> Path:
+    """Resolve caminho válido para arquivo de estado.
+
+    Se PREFECT_STATE_FILE apontar para um diretório, usa o nome
+    `.prefect_service_state.json` dentro dele. Se o caminho esperado para
+    arquivo já existir como diretório (caso de volume Docker mal montado),
+    salva em um arquivo alternativo no mesmo diretório pai.
+    """
+    arquivo_estado = Path(estado_servico['arquivo_estado'])
+
+    # Permite configurar PREFECT_STATE_FILE como diretório.
+    if arquivo_estado.exists() and arquivo_estado.is_dir():
+        return arquivo_estado / '.prefect_service_state.json'
+
+    # Se não existe, tenta inferir diretório por barra final.
+    raw = os.getenv('PREFECT_STATE_FILE', '')
+    if raw.endswith('/') or raw.endswith('\\'):
+        return arquivo_estado / '.prefect_service_state.json'
+
+    return arquivo_estado
+
+
 def carregar_estado():
     """Carrega estado do serviço de arquivo."""
     try:
-        if estado_servico['arquivo_estado'].exists():
-            with open(estado_servico['arquivo_estado'], 'r') as f:
+        arquivo_estado = _resolver_arquivo_estado()
+        if arquivo_estado.exists():
+            with open(arquivo_estado, 'r') as f:
                 estado_servico.update(json.load(f))
     except Exception as e:
         print(f"⚠️  Erro ao carregar estado: {e}")
@@ -71,7 +94,9 @@ def carregar_estado():
 def salvar_estado():
     """Salva estado do serviço em arquivo."""
     try:
-        estado_servico['arquivo_estado'].parent.mkdir(parents=True, exist_ok=True)
+        arquivo_estado = _resolver_arquivo_estado()
+        estado_servico['arquivo_estado'] = arquivo_estado
+        arquivo_estado.parent.mkdir(parents=True, exist_ok=True)
 
         ultima_execucao = estado_servico.get('ultima_execucao')
         if isinstance(ultima_execucao, datetime):
@@ -81,7 +106,7 @@ def salvar_estado():
         else:
             ultima_execucao_str = None
 
-        with open(estado_servico['arquivo_estado'], 'w') as f:
+        with open(arquivo_estado, 'w') as f:
             json.dump({
                 'ultima_execucao': ultima_execucao_str,
                 'intervalo_atual_minutos': estado_servico['intervalo_atual_minutos'],

@@ -20,7 +20,7 @@ QUERY UTILIZADA:
     ✅ GROUP BY (l."horaLeitura", l.estacao_id, e.nome)
     ✅ WHERE horaLeitura > ultima_sincronizacao (apenas dados novos)
     ✅ ORDER BY l."horaLeitura"
-    ✅ MESMA query do exportar_meteorologicos_nimbus_bigquery.py com filtro WHERE
+    ✅ Mesmo SQL que exportar_meteorologicos_nimbus_bigquery (meteorologicos_nimbus_queries.py)
 
 VANTAGENS:
     ✅ Sincronização incremental (apenas dados novos)
@@ -227,9 +227,7 @@ def obter_ultima_sincronizacao_por_estacao(client, dataset_id, table_id):
 
 def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
     """Retorna query para buscar apenas dados novos desde a última sincronização.
-    
-    MESMA query do exportar_meteorologicos_nimbus_bigquery.py, mas com WHERE.
-    
+        
     IMPORTANTE: ultima_sincronizacao deve estar em UTC (vem de obter_ultima_sincronizacao_bigquery).
     
     Se ultimas_por_estacao for fornecido, usa filtro por estação para evitar duplicações.
@@ -274,17 +272,16 @@ def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
         # Usar filtro geral (fallback)
         where_clause = f"l.\"horaLeitura\" > '{timestamp_str}'::timestamptz"
     
-    # MESMA query do script de exportação (GROUP BY), mas com WHERE mais preciso
     return f"""
 SELECT
     l."horaLeitura" AS data_hora,  -- simples e já com timezone correto
     l.estacao_id AS id_estacao,
     e.nome       AS nome_estacao,
     MAX(CASE WHEN s.nome = 'Chuva'                 THEN ls.valor END) AS chuva,
-    MAX(CASE WHEN s.nome = 'Direção Vento'         THEN ls.valor END) AS dirVento,
-    MAX(CASE WHEN s.nome = 'Velocidade Vento'      THEN ls.valor END) AS velVento,
-    MAX(CASE WHEN s.nome = 'Temperatura do Ar'     THEN ls.valor END) AS temperatura,
-    MAX(CASE WHEN s.nome = 'Pressão Atmosférica'   THEN ls.valor END) AS pressao,
+    MAX(CASE WHEN s.nome = 'Direcao do Vento'      THEN ls.valor END) AS dirVento,
+    MAX(CASE WHEN s.nome = 'Velocidade do Vento'   THEN ls.valor END) AS velVento,
+    MAX(CASE WHEN s.nome = 'Temperatuda do Ar'     THEN ls.valor END) AS temperatura,
+    MAX(CASE WHEN s.nome = 'Pressao ATM'           THEN ls.valor END) AS pressao,
     MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade
 
 FROM public.estacoes_leiturasensor ls
