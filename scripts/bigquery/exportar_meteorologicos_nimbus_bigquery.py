@@ -603,6 +603,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
         
         colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
+        colunas_numericas_lower = {c.lower() for c in colunas_numericas}
         for col in colunas_numericas:
             if col in chunk_df.columns:
                 # Converter para float64 explicitamente
@@ -611,6 +612,11 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
                 # Forçar explicitamente float64 (evita inferência como INT32 pelo pyarrow)
                 # Usar astype('float64') que garante o tipo mesmo com valores inteiros
                 chunk_df[col] = chunk_df[col].astype('float64')
+        # PostgreSQL reduz aliases sem aspas para minúsculas (ex.: dirVento -> dirvento).
+        # Garantir coerção também nesses casos para evitar INT32 no Parquet.
+        for col in chunk_df.columns:
+            if col.lower() in colunas_numericas_lower:
+                chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
         
         chunk_df = chunk_df[chunk_df['dia_utc'].notna()]
         
@@ -641,6 +647,9 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
                 if col in df_batch.columns:
                     # Forçar float64 explicitamente
                     df_batch[col] = df_batch[col].astype('float64')
+            for col in df_batch.columns:
+                if col.lower() in colunas_numericas_lower:
+                    df_batch[col] = pd.to_numeric(df_batch[col], errors='coerce').astype('float64')
             batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
             # Usar schema explícito do pyarrow para garantir tipos corretos (float64)
             import pyarrow as pa
@@ -650,7 +659,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
             pa_schema = table.schema
             new_fields = []
             for field in pa_schema:
-                if field.name in colunas_numericas:
+                if field.name.lower() in colunas_numericas_lower:
                     # Forçar tipo double (float64) preservando o nome exato da coluna
                     new_fields.append(pa.field(field.name, pa.float64(), nullable=True))
                 else:
@@ -677,9 +686,13 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
         if len(df_batch) > 0:
             # Garantir que todas as colunas numéricas sejam float64 antes de salvar
             colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
+            colunas_numericas_lower = {c.lower() for c in colunas_numericas}
             for col in colunas_numericas:
                 if col in df_batch.columns:
                     df_batch[col] = df_batch[col].astype('float64')
+            for col in df_batch.columns:
+                if col.lower() in colunas_numericas_lower:
+                    df_batch[col] = pd.to_numeric(df_batch[col], errors='coerce').astype('float64')
             batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
             # Usar schema explícito do pyarrow para garantir tipos corretos (float64)
             import pyarrow as pa
@@ -689,7 +702,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
             pa_schema = table.schema
             new_fields = []
             for field in pa_schema:
-                if field.name in colunas_numericas:
+                if field.name.lower() in colunas_numericas_lower:
                     # Forçar tipo double (float64) preservando o nome exato da coluna
                     new_fields.append(pa.field(field.name, pa.float64(), nullable=True))
                 else:

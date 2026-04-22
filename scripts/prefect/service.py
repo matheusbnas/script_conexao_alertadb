@@ -215,28 +215,57 @@ def executar_workflow(workflow_tipo: str) -> Dict:
     print(f"   Script: {script_path}")
     print(f"   Início: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
 
+    def _erro_prefect_transitorio(stderr_text: str) -> bool:
+        stderr_l = (stderr_text or "").lower()
+        return (
+            "httpx.readtimeout" in stderr_l
+            or "httpcore.readtimeout" in stderr_l
+            or "readtimeout" in stderr_l
+            or "timed out" in stderr_l
+        )
+
     try:
         env = os.environ.copy()
         env['PYTHONIOENCODING'] = 'utf-8'
+        max_tentativas = max(1, int(os.getenv('PREFECT_WORKFLOW_MAX_ATTEMPTS', '2')))
+        retry_wait_segundos = max(1, int(os.getenv('PREFECT_WORKFLOW_RETRY_WAIT_SECONDS', '20')))
 
-        process = subprocess.Popen(
-            [sys.executable, str(script_path), '--run-once', f'--flow={workflow_tipo}'],
-            cwd=str(project_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
+        ultima_saida = {
+            'sucesso': False,
+            'tempo_segundos': 0.0,
+            'return_code': -1,
+            'stdout': '',
+            'stderr': '',
+        }
 
-        stdout_bytes, stderr_bytes = process.communicate(timeout=3600)
+        for tentativa in range(1, max_tentativas + 1):
+            process = subprocess.Popen(
+                [sys.executable, str(script_path), '--run-once', f'--flow={workflow_tipo}'],
+                cwd=str(project_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
 
-        tempo_decorrido = (datetime.now() - inicio).total_seconds()
-        stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
-        stderr_text = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
-        sucesso     = process.returncode == 0
+            stdout_bytes, stderr_bytes = process.communicate(timeout=3600)
+            tempo_decorrido = (datetime.now() - inicio).total_seconds()
+            stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
+            stderr_text = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
+            sucesso = process.returncode == 0
 
-        print(f"   {'✅' if sucesso else '❌'} Execução concluída em {tempo_decorrido:.1f} segundos")
+            ultima_saida = {
+                'sucesso': sucesso,
+                'tempo_segundos': tempo_decorrido,
+                'return_code': process.returncode,
+                'stdout': stdout_text,
+                'stderr': stderr_text,
+            }
 
-        if not sucesso:
+            if sucesso:
+                print(f"   ✅ Execução concluída em {tempo_decorrido:.1f} segundos (tentativa {tentativa}/{max_tentativas})")
+                return ultima_saida
+
+            print(f"   ❌ Tentativa {tentativa}/{max_tentativas} falhou em {tempo_decorrido:.1f} segundos")
             print("\n   📄 Saída (stdout):")
             if stdout_text.strip():
                 for line in stdout_text.splitlines()[-20:]:
@@ -252,13 +281,17 @@ def executar_workflow(workflow_tipo: str) -> Dict:
                 print("      (vazio)")
             print()
 
-        return {
-            'sucesso': sucesso,
-            'tempo_segundos': tempo_decorrido,
-            'return_code': process.returncode,
-            'stdout': stdout_text,
-            'stderr': stderr_text,
-        }
+            erro_transitorio = _erro_prefect_transitorio(stderr_text)
+            pode_repetir = tentativa < max_tentativas and erro_transitorio
+            if pode_repetir:
+                print(f"   🔁 Erro transitório detectado (timeout de comunicação Prefect).")
+                print(f"   ⏳ Aguardando {retry_wait_segundos}s antes de repetir...")
+                time.sleep(retry_wait_segundos)
+                continue
+
+            return ultima_saida
+
+        return ultima_saida
 
     except subprocess.TimeoutExpired:
         print(f"   ⏱️  TIMEOUT: Execução demorou mais de 1 hora")
