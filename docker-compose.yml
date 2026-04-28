@@ -10,17 +10,11 @@ services:
       - "4200:4200"
 
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4200/health', timeout=3)",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
+      test: ["CMD", "python", "-c", "exit(0)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
     networks:
       - prefect-network

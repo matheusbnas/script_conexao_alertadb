@@ -176,3 +176,18 @@ prefect deploy --all   # usa prefect.yaml na raiz
 ## 🆘 Suporte
 
 Para problemas ou dúvidas, consulte a pasta [docs/](docs/).
+
+### Conflito de porta do Prefect (4200)
+
+Se aparecer erro de bind (`address already in use`) ao subir o `prefect-server-local`, libere a porta `4200` no host e suba novamente os containers:
+
+```bash
+# Identificar processo que está escutando na porta 4200
+sudo lsof -iTCP:4200 -sTCP:LISTEN -n -P
+
+# Encerrar o processo (substitua <PID> pelo valor retornado)
+sudo kill -9 <PID>
+
+# Subir novamente os serviços
+docker compose up -d --build prefect-server prefect-pluviometricos prefect-meteorologicos
+```
