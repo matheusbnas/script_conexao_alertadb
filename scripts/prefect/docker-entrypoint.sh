@@ -38,6 +38,7 @@ case "$1" in
         if echo "${PREFECT_API_URL:-}" | grep -qE 'prefect-server|127\.0\.0\.1|localhost'; then
             echo "⏳ Aguardando Prefect API (prefect-server:4200)..."
             wait_for_service prefect-server 4200 120 || true
+            PREFECT_HEALTH_OK=0
             for i in $(seq 1 90); do
                 if python -c "
 import urllib.request
@@ -50,10 +51,19 @@ for path in ('/health', '/api/health'):
 raise SystemExit(1)
 " 2>/dev/null; then
                     echo "✅ Prefect API (health) respondendo"
+                    PREFECT_HEALTH_OK=1
                     break
                 fi
                 sleep 1
             done
+
+            # Se a API do Prefect não responder, não aborta o container.
+            # O service.py aplica fallback para execução direta dos scripts de sync,
+            # mantendo atualização do BigQuery mesmo sem API do Prefect.
+            if [ "$PREFECT_HEALTH_OK" -ne 1 ]; then
+                echo "⚠️  Prefect API indisponível após timeout."
+                echo "⚠️  Continuando sem API; service.py aplicará fallback de sincronização."
+            fi
         fi
 
         echo "🚀 Iniciando serviço Prefect..."

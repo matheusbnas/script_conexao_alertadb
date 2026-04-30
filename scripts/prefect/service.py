@@ -224,6 +224,34 @@ def executar_workflow(workflow_tipo: str) -> Dict:
             or "timed out" in stderr_l
         )
 
+    def _erro_api_prefect(stderr_text: str) -> bool:
+        stderr_l = (stderr_text or "").lower()
+        return (
+            "failed to reach api at" in stderr_l
+            or "ephemeral prefect api server" in stderr_l
+            or "timed out while attempting to connect to ephemeral" in stderr_l
+        )
+
+    def _executar_script_direto(script_rel_path: str) -> Dict:
+        inicio_local = datetime.now()
+        process = subprocess.Popen(
+            [sys.executable, str(project_root / script_rel_path), '--once'],
+            cwd=str(project_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        stdout_bytes, stderr_bytes = process.communicate(timeout=3600)
+        stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
+        stderr_text = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
+        return {
+            'sucesso': process.returncode == 0,
+            'tempo_segundos': (datetime.now() - inicio_local).total_seconds(),
+            'return_code': process.returncode,
+            'stdout': stdout_text,
+            'stderr': stderr_text,
+        }
+
     try:
         env = os.environ.copy()
         env['PYTHONIOENCODING'] = 'utf-8'
@@ -288,6 +316,23 @@ def executar_workflow(workflow_tipo: str) -> Dict:
                 print(f"   ⏳ Aguardando {retry_wait_segundos}s antes de repetir...")
                 time.sleep(retry_wait_segundos)
                 continue
+
+            if _erro_api_prefect(stderr_text):
+                print("   ⚠️  API do Prefect indisponível. Aplicando fallback sem orquestrador...")
+                if workflow_tipo == 'pluviometricos':
+                    return _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
+                if workflow_tipo == 'meteorologicos':
+                    return _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                if workflow_tipo == 'combinado':
+                    r1 = _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
+                    r2 = _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                    return {
+                        'sucesso': r1.get('sucesso', False) and r2.get('sucesso', False),
+                        'tempo_segundos': r1.get('tempo_segundos', 0) + r2.get('tempo_segundos', 0),
+                        'return_code': 0 if (r1.get('sucesso', False) and r2.get('sucesso', False)) else 1,
+                        'stdout': f"{r1.get('stdout','')}\n{r2.get('stdout','')}",
+                        'stderr': f"{r1.get('stderr','')}\n{r2.get('stderr','')}",
+                    }
 
             return ultima_saida
 
