@@ -33,18 +33,45 @@ case "$1" in
         # Aguardar banco de dados de origem (se necessário)
         wait_for_service "$DB_ORIGEM_HOST" "${DB_ORIGEM_PORT:-5432}" 30 || true
 
-        # API do Prefect (container prefect-server na rede Docker). Só porta aberta não garante HTTP
-        # pronto; aguardamos TCP e depois a rota de health.
-        if echo "${PREFECT_API_URL:-}" | grep -qE 'prefect-server|127\.0\.0\.1|localhost'; then
-            echo "⏳ Aguardando Prefect API (prefect-server:4200)..."
-            wait_for_service prefect-server 4200 120 || true
+        # API do Prefect: usa host/porta da PREFECT_API_URL para funcionar
+        # tanto em rede Docker bridge quanto em network_mode: host.
+        PREFECT_API_HOST=$(python - <<'PY'
+from urllib.parse import urlparse
+import os
+u = (os.getenv("PREFECT_API_URL") or "").strip()
+if not u:
+    print("")
+else:
+    p = urlparse(u)
+    print(p.hostname or "")
+PY
+)
+            PREFECT_API_PORT=$(python - <<'PY'
+from urllib.parse import urlparse
+import os
+u = (os.getenv("PREFECT_API_URL") or "").strip()
+if not u:
+    print("4200")
+else:
+    p = urlparse(u)
+    if p.port:
+        print(p.port)
+    else:
+        print(443 if p.scheme == "https" else 80)
+PY
+)
+
+        if [ -n "${PREFECT_API_HOST:-}" ]; then
+            echo "⏳ Aguardando Prefect API (${PREFECT_API_HOST}:${PREFECT_API_PORT})..."
+            wait_for_service "${PREFECT_API_HOST}" "${PREFECT_API_PORT}" 120 || true
             PREFECT_HEALTH_OK=0
             for i in $(seq 1 90); do
                 if python -c "
 import urllib.request
+base = 'http://${PREFECT_API_HOST}:${PREFECT_API_PORT}'
 for path in ('/health', '/api/health'):
     try:
-        urllib.request.urlopen('http://prefect-server:4200' + path, timeout=3)
+        urllib.request.urlopen(base + path, timeout=3)
         raise SystemExit(0)
     except Exception:
         continue

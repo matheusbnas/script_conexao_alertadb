@@ -27,14 +27,13 @@ services:
     restart: unless-stopped
 
     depends_on:
-      prefect-server:
-        condition: service_healthy
+      - prefect-server
 
     environment:
       # Prefect
       - PREFECT_WORKFLOW=${PREFECT_WORKFLOW:-combinado}
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-http://prefect-server:4200/api}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
       - PREFECT_STATE_FILE=/app/scripts/prefect/state/combinado.json
       
       # Banco de dados (do .env ou variáveis de ambiente)
@@ -67,8 +66,7 @@ services:
       # Estado do serviço
       - ./scripts/prefect/state:/app/scripts/prefect/state
     
-    networks:
-      - prefect-network
+    network_mode: host
     
     healthcheck:
       # Considera saudável após o estado do serviço existir (após primeira execução)
@@ -85,14 +83,13 @@ services:
     restart: unless-stopped
 
     depends_on:
-      prefect-server:
-        condition: service_healthy
+      - prefect-server
 
     environment:
       # Prefect
       - PREFECT_WORKFLOW=pluviometricos
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-http://prefect-server:4200/api}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
       - PREFECT_STATE_FILE=/app/scripts/prefect/state/pluviometricos.json
 
       # Banco de dados (do .env ou variáveis de ambiente)
@@ -115,8 +112,7 @@ services:
       - ./logs:/app/logs
       - ./scripts/prefect/state:/app/scripts/prefect/state
 
-    networks:
-      - prefect-network
+    network_mode: host
 
   # Serviço dedicado: apenas METEOROLÓGICOS
   prefect-meteorologicos:
@@ -125,14 +121,13 @@ services:
     restart: unless-stopped
 
     depends_on:
-      prefect-server:
-        condition: service_healthy
+      - prefect-server
 
     environment:
       # Prefect
       - PREFECT_WORKFLOW=meteorologicos
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-http://prefect-server:4200/api}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
       - PREFECT_STATE_FILE=/app/scripts/prefect/state/meteorologicos.json
 
       # Banco de dados (do .env ou variáveis de ambiente)
@@ -155,8 +150,7 @@ services:
       - ./logs:/app/logs
       - ./scripts/prefect/state:/app/scripts/prefect/state
 
-    networks:
-      - prefect-network
+    network_mode: host
 
 networks:
   prefect-network:

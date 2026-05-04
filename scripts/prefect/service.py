@@ -22,6 +22,7 @@ import json
 import os
 import signal
 import smtplib
+import socket
 import subprocess
 import sys
 import time
@@ -30,6 +31,7 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -215,6 +217,24 @@ def executar_workflow(workflow_tipo: str) -> Dict:
     print(f"   Script: {script_path}")
     print(f"   Início: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
 
+    def _prefect_api_disponivel() -> bool:
+        """Valida conectividade TCP básica com PREFECT_API_URL para evitar timeouts longos."""
+        api_url = (os.getenv("PREFECT_API_URL") or "").strip()
+        if not api_url:
+            return True
+
+        parsed = urlparse(api_url)
+        host = (parsed.hostname or "").strip()
+        if not host:
+            return True
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return True
+        except OSError:
+            return False
+
     def _erro_prefect_transitorio(stderr_text: str) -> bool:
         stderr_l = (stderr_text or "").lower()
         return (
@@ -265,6 +285,24 @@ def executar_workflow(workflow_tipo: str) -> Dict:
             'stdout': '',
             'stderr': '',
         }
+
+        # Se a API não está acessível, evita ficar dezenas de minutos preso em timeout do Prefect.
+        if not _prefect_api_disponivel():
+            print("   ⚠️  API do Prefect inacessível (verificação TCP). Aplicando fallback imediato...")
+            if workflow_tipo == 'pluviometricos':
+                return _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
+            if workflow_tipo == 'meteorologicos':
+                return _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+            if workflow_tipo == 'combinado':
+                r1 = _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
+                r2 = _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                return {
+                    'sucesso': r1.get('sucesso', False) and r2.get('sucesso', False),
+                    'tempo_segundos': r1.get('tempo_segundos', 0) + r2.get('tempo_segundos', 0),
+                    'return_code': 0 if (r1.get('sucesso', False) and r2.get('sucesso', False)) else 1,
+                    'stdout': f"{r1.get('stdout','')}\n{r2.get('stdout','')}",
+                    'stderr': f"{r1.get('stderr','')}\n{r2.get('stderr','')}",
+                }
 
         for tentativa in range(1, max_tentativas + 1):
             process = subprocess.Popen(

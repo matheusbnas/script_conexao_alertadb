@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -200,8 +200,16 @@ def verificar_lacunas_tabela(
         )
         client = bq_client.Client(credentials=credentials, project=credentials.project_id)
 
-        query_bq = f"SELECT MAX(dia_utc) AS ultima_sincronizacao FROM `{dataset_id}.{tabela_bq}`"
-        results = client.query(query_bq).result()
+        # MAX(dia_utc) global pode ser dominado por 1 linha com data futura inválida (ex.: 2103),
+        # gerando "lacunas" negativas e mensagens absurdas. Limitamos ao que é plausível.
+        tabela_ref = f"`{dataset_id}.{tabela_bq}`"
+        query_bq_sane = f"""
+        SELECT MAX(dia_utc) AS ultima_sincronizacao
+        FROM {tabela_ref}
+        WHERE dia_utc IS NOT NULL
+          AND dia_utc <= TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+        """
+        results = client.query(query_bq_sane).result()
 
         ultima_sync: Optional[datetime] = None
         for row in results:
@@ -214,6 +222,47 @@ def verificar_lacunas_tabela(
                         ultima_sync = ultima_sync.astimezone(timezone.utc)
                 break
 
+        data_atual = datetime.now(timezone.utc)
+        limite_futuro = data_atual + timedelta(days=3)
+
+        if not ultima_sync:
+            # Fallback: tabela só com datas futuras ou filtro muito restrito — tenta MAX bruto para diagnóstico
+            query_bq_raw = f"SELECT MAX(dia_utc) AS ultima_sincronizacao FROM {tabela_ref}"
+            for row in client.query(query_bq_raw).result():
+                if row.ultima_sincronizacao:
+                    raw = row.ultima_sincronizacao
+                    if isinstance(raw, datetime):
+                        if raw.tzinfo is None:
+                            raw = raw.replace(tzinfo=timezone.utc)
+                        else:
+                            raw = raw.astimezone(timezone.utc)
+                        if raw > limite_futuro:
+                            print(
+                                "❌ Dados inconsistentes: MAX(dia_utc) na tabela está no futuro "
+                                f"({raw.isoformat()}). Corrija outliers em `{tabela_bq}.dia_utc` no BigQuery."
+                            )
+                            return {
+                                'sucesso': False,
+                                'mensagem': (
+                                    'MAX(dia_utc) futuro — provável dado corrompido; '
+                                    'a verificação de lacunas foi abortada.'
+                                ),
+                                'lacunas_detectadas': False,
+                            }
+                        ultima_sync = raw
+                break
+
+        if ultima_sync and ultima_sync > limite_futuro:
+            print(
+                "❌ Última sincronização calculada ainda está no futuro após saneamento — "
+                f"verifique `{tabela_bq}.dia_utc`."
+            )
+            return {
+                'sucesso': False,
+                'mensagem': 'ultima_sincronizacao inválida (futuro)',
+                'lacunas_detectadas': False,
+            }
+
         if not ultima_sync:
             return {
                 'sucesso': True,
@@ -222,7 +271,6 @@ def verificar_lacunas_tabela(
             }
 
         tz_brasil = pytz.timezone('America/Sao_Paulo')
-        data_atual = datetime.now(timezone.utc)
         diferenca = data_atual - ultima_sync
 
         ultima_sync_br = ultima_sync.astimezone(tz_brasil)

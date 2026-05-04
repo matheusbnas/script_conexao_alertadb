@@ -589,12 +589,15 @@ def sincronizar_incremental():
                 except Exception:
                     return None
             
-            # Processar todas as colunas: dia_utc (TIMESTAMP), dia (TIMESTAMP SP), dia_original (STRING) e utc_offset (STRING)
+            # Processar todas as colunas: dia_utc (TIMESTAMP), dia (DATETIME local SP), dia_original (STRING) e utc_offset (STRING)
             chunk_df['dia'] = chunk_df['dia_utc'].apply(converter_para_dia_local_sp)
             chunk_df['dia_original'] = chunk_df['dia_utc'].apply(formatar_dia_original)
             chunk_df['utc_offset'] = chunk_df['dia_utc'].apply(extrair_utc_offset)
             chunk_df['dia_utc'] = chunk_df['dia_utc'].apply(processar_dia_timestamp)
-            
+            # Alinhar ao exportar/sync pluviométricos: DATETIME no BQ = datetime64 sem tz (microssegundos)
+            if 'dia' in chunk_df.columns:
+                chunk_df['dia'] = pd.to_datetime(chunk_df['dia']).dt.floor('us')
+
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
             
@@ -694,12 +697,14 @@ def sincronizar_incremental():
         for i, parquet_file in enumerate(parquet_files, 1):
             print(f"   📤 Carregando arquivo {i}/{len(parquet_files)}: {parquet_file.name}...")
             file_job_config = bigquery.LoadJobConfig(
-                # Não passar schema - BigQuery infere do Parquet e permite atualização automática
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,  # Sempre APPEND na sincronização
+                # Schema explícito: sem isso o Parquet pode inferir `dia` como TIMESTAMP e a carga
+                # falha se a tabela no BQ tiver `dia` como DATETIME (erro 400 schema mismatch).
+                schema=schema,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                 source_format=bigquery.SourceFormat.PARQUET,
                 schema_update_options=[
                     bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION,
-                    bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION  # Permite INTEGER -> FLOAT64
+                    bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION,
                 ],
             )
             
