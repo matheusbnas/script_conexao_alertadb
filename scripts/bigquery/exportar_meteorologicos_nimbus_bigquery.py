@@ -186,16 +186,56 @@ SELECT
     l."horaLeitura" AS data_hora,  -- simples e já com timezone correto
     l.estacao_id AS id_estacao,
     e.nome       AS nome_estacao,
-    MAX(CASE WHEN s.nome = 'Chuva'                 THEN ls.valor END) AS chuva,
+    MAX(
+        CASE
+            -- Até jan/2020 todas as estações usam coleta de 15 min (m15).
+            WHEN l."horaLeitura" < TIMESTAMPTZ '2020-02-01 00:00:00+00' THEN elc.m15
+            -- Guaratiba/São Cristóvão iniciam coleta de 5 min em mar/2020.
+            WHEN (
+                e.nome ILIKE 'Guaratiba%%'
+                OR e.nome ILIKE 'Sao Cristovao%%'
+                OR e.nome ILIKE 'São Cristóvão%%'
+            ) AND l."horaLeitura" < TIMESTAMPTZ '2020-03-01 00:00:00+00' THEN elc.m15
+            -- Demais casos já em 5 min.
+            ELSE elc.m05
+        END
+    ) AS chuva,
     MAX(CASE WHEN s.nome = 'Direcao do Vento'      THEN ls.valor END) AS dirVento,
     MAX(CASE WHEN s.nome = 'Velocidade do Vento'   THEN ls.valor END) AS velVento,
     MAX(CASE WHEN s.nome = 'Temperatuda do Ar'     THEN ls.valor END) AS temperatura,
     MAX(CASE WHEN s.nome = 'Pressao ATM'           THEN ls.valor END) AS pressao,
-    MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade
+    MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade,
+    CASE
+        WHEN MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END) IS NULL
+          OR MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) IS NULL
+          OR MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) <= 0
+        THEN NULL
+        ELSE (
+            243.04 * (
+                LN(MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) / 100.0) +
+                (
+                    17.625 * MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
+                ) / (
+                    243.04 + MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
+                )
+            )
+        ) / (
+            17.625 - (
+                LN(MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) / 100.0) +
+                (
+                    17.625 * MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
+                ) / (
+                    243.04 + MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
+                )
+            )
+        )
+    END AS ponto_orvalho
 
 FROM public.estacoes_leiturasensor ls
 JOIN public.estacoes_leitura l
       ON ls.leitura_id = l.id
+LEFT JOIN public.estacoes_leiturachuva elc
+      ON elc.leitura_id = l.id
 JOIN public.estacoes_sensor s
       ON ls.sensor_id = s.id
 JOIN public.estacoes_estacao e
@@ -241,6 +281,7 @@ def obter_schema_meteorologicos():
         bigquery.SchemaField("temperatura", "FLOAT64", mode="NULLABLE", description="Temperatura do ar (°C)"),
         bigquery.SchemaField("pressao", "FLOAT64", mode="NULLABLE", description="Pressão atmosférica (hPa)"),
         bigquery.SchemaField("umidade", "FLOAT64", mode="NULLABLE", description="Umidade do ar (%)"),
+        bigquery.SchemaField("ponto_orvalho", "FLOAT64", mode="NULLABLE", description="Ponto de orvalho (°C), calculado por Magnus-Tetens a partir de temperatura e umidade relativa"),
     ]
 
 def criar_dataset_se_nao_existir(client, dataset_id):
@@ -602,7 +643,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
         if 'estacao_id' in chunk_df.columns:
             chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
         
-        colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
+        colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade', 'ponto_orvalho']
         colunas_numericas_lower = {c.lower() for c in colunas_numericas}
         for col in colunas_numericas:
             if col in chunk_df.columns:
@@ -685,7 +726,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
             print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
         if len(df_batch) > 0:
             # Garantir que todas as colunas numéricas sejam float64 antes de salvar
-            colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade']
+            colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade', 'ponto_orvalho']
             colunas_numericas_lower = {c.lower() for c in colunas_numericas}
             for col in colunas_numericas:
                 if col in df_batch.columns:
