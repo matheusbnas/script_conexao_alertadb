@@ -333,6 +333,7 @@ JOIN public.estacoes_estacao e
       ON e.id = l.estacao_id
 
 WHERE {where_clause}
+  AND e.id IN (1,11,16,19,20,22,28,32)
 
 GROUP BY
     l."horaLeitura",

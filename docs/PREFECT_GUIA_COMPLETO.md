@@ -38,19 +38,57 @@ pip install prefect prefect-gcp
 
 ## 🐳 Opção 1 — Docker (recomendado para uso contínuo local)
 
-Sobe serviços separados com UI do Prefect em tempo real.
+Sobe workers com UI do Prefect em tempo real. O projeto expõe três formas de sync incremental no `docker-compose.yml`:
 
-### Subir serviços separados (recomendado)
+| Serviço | Workflow | Descrição |
+|---------|----------|-----------|
+| `prefect-service` | `combinado` | Um container roda **pluviométricos e meteorológicos** na mesma sequência |
+| `prefect-pluviometricos` | `pluviometricos` | Somente dados pluviométricos → BigQuery |
+| `prefect-meteorologicos` | `meteorologicos` | Somente dados meteorológicos → BigQuery |
+
+Todos dependem do `prefect-server` (API + UI).
+
+### Somente pluviométricos
+
+```bash
+docker compose up -d --build prefect-server prefect-pluviometricos
+docker compose logs -f prefect-pluviometricos
+```
+
+### Somente meteorológicos
+
+```bash
+docker compose up -d --build prefect-server prefect-meteorologicos
+docker compose logs -f prefect-meteorologicos
+```
+
+### Combinado (um único worker)
+
+```bash
+docker compose up -d --build prefect-server prefect-service
+docker compose logs -f prefect-service
+```
+
+### Dois workers dedicados em paralelo (sem combinado)
 
 ```bash
 docker compose up -d --build prefect-server prefect-pluviometricos prefect-meteorologicos
 ```
 
-Ou o fluxo combinado (pluviométricos + meteorológicos em um único container):
+### Parar só um tipo de sync
+
+Exemplo: pausar meteorológicos durante recarga ou correção na tabela, mantendo pluviométricos:
 
 ```bash
-docker compose up -d --build prefect-server prefect-service
+docker compose stop prefect-meteorologicos
+docker compose start prefect-meteorologicos
 ```
+
+### Evitar trabalho duplicado
+
+Não rode o **combinado** (`prefect-service`) ao mesmo tempo que os **dois workers dedicados** só por hábito: pode **duplicar** ingestão contra NIMBUS/BigQuery. Escolha **combinado** *ou* **dedicados** conforme o processo operacional.
+
+Mais comandos e contexto: [`scripts/prefect/README.md`](../scripts/prefect/README.md) e [`AUTOMACAO_GUIA_COMPLETO.md`](AUTOMACAO_GUIA_COMPLETO.md).
 
 ### Monitoramento
 
@@ -59,6 +97,7 @@ docker compose up -d --build prefect-server prefect-service
 docker compose ps
 
 # Logs em tempo real
+docker compose logs -f prefect-service
 docker compose logs -f prefect-pluviometricos
 docker compose logs -f prefect-meteorologicos
 
@@ -80,10 +119,12 @@ Controlado por `PREFECT_INTERVALO` no `.env` (padrão: `5` minutos):
 PREFECT_INTERVALO=5
 ```
 
-Após alterar, reaplique:
+Após alterar, reaplique **apenas os serviços que estiver usando** (exemplos):
 
 ```bash
 docker compose up -d --build prefect-pluviometricos prefect-meteorologicos
+docker compose up -d --build prefect-service
+docker compose up -d --build prefect-meteorologicos
 ```
 
 ### Verificações

@@ -2,6 +2,8 @@
 
 Scripts para exportar e sincronizar dados pluviométricos e meteorológicos para Google BigQuery.
 
+**Orquestração no Docker** (subir só incremental pluviométrico, só meteorológico ou combinado): veja [`scripts/prefect/README.md`](../prefect/README.md).
+
 ---
 
 ## 📋 Scripts Disponíveis
@@ -43,7 +45,7 @@ Scripts para exportar e sincronizar dados pluviométricos e meteorológicos para
 #### `exportar_meteorologicos_nimbus_bigquery.py`
 - **Função:** Carga inicial completa de dados meteorológicos do NIMBUS para BigQuery
 - **Uso:** Executar uma vez para carregar todos os dados históricos
-- **Campos:** chuva, dirVento, velVento, temperatura, pressao, umidade
+- **Campos:** chuva (origem pluviométrica onde aplicável), dirVento, velVento, temperatura, pressao, umidade, ponto_orvalho (calculado)
 - **Coluna `dia`:** TIMESTAMP (UTC) no BigQuery, preservando timezone original
 
 ---

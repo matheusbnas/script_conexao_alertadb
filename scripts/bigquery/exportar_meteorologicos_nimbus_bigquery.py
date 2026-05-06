@@ -243,6 +243,7 @@ JOIN public.estacoes_estacao e
 
 WHERE l."horaLeitura" >= '{data_inicio}'
   AND l."horaLeitura" < '{data_fim}'
+  AND e.id IN (1,11,16,19,20,22,28,32)
 
 GROUP BY
     l."horaLeitura",

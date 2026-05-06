@@ -44,12 +44,27 @@ python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py
 ### 4. Automação
 
 ```bash
-# Subir serviços Prefect + Docker
+# Subir serviços Prefect + Docker (workflow combinado: pluviométricos + meteorológicos)
 docker compose up -d
 
 # Ver logs
 docker compose logs -f prefect-service
 ```
+
+**Somente um tipo no Docker** (sem subir o combinado): suba o servidor Prefect e o worker desejado.
+
+```bash
+# Apenas pluviométricos
+docker compose up -d prefect-server prefect-pluviometricos
+
+# Apenas meteorológicos
+docker compose up -d prefect-server prefect-meteorologicos
+```
+
+Para parar só o worker meteorológico (exemplo) mantendo os demais containers:  
+`docker compose stop prefect-meteorologicos` ou `docker stop prefect-bigquery-meteorologicos`.
+
+Detalhes, tabela de serviços e boas práticas: [`scripts/prefect/README.md`](scripts/prefect/README.md).
 
 ---
 

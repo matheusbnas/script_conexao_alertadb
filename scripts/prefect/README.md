@@ -14,24 +14,77 @@ Execução contínua **a cada 5 minutos** para atualizar os dados no BigQuery. N
 - Arquivo `.env` na raiz com variáveis de banco e GCP
 - Pasta `credentials/` com `credentials.json` (GCP)
 
-### Comandos
+### Serviços no `docker-compose.yml`
+
+| Serviço | Container | Workflow | Uso típico |
+|---------|-----------|-----------|------------|
+| `prefect-server` | `prefect-server-local` | — | UI do Prefect (`http://localhost:4200`) |
+| `prefect-service` | `prefect-bigquery-sync` | `combinado` | Pluviométricos + meteorológicos juntos |
+| `prefect-pluviometricos` | `prefect-bigquery-pluviometricos` | `pluviometricos` | Somente incremental pluviométrico |
+| `prefect-meteorologicos` | `prefect-bigquery-meteorologicos` | `meteorologicos` | Somente incremental meteorológico |
+
+Os workers `combinado`, `pluviometricos` e `meteorologicos` dependem do `prefect-server` (`depends_on`).
+
+### Comandos (raiz do projeto)
+
+Use `docker compose` (v2) ou `docker-compose` (v1), conforme seu ambiente.
+
+#### Padrão: workflow combinado
 
 ```bash
-# Subir o serviço (roda a cada 5 minutos)
-docker-compose up -d
+docker compose up -d
 
-# Ver logs em tempo real
-docker-compose logs -f prefect-service
+docker compose logs -f prefect-service
+```
 
-# Parar
-docker-compose down
+#### Somente pluviométricos (sem meteorológicos)
+
+```bash
+# UI + worker dedicado
+docker compose up -d prefect-server prefect-pluviometricos
+
+docker compose logs -f prefect-pluviometricos
+```
+
+#### Somente meteorológicos (sem pluviométricos)
+
+```bash
+docker compose up -d prefect-server prefect-meteorologicos
+
+docker compose logs -f prefect-meteorologicos
+```
+
+#### Parar só um worker (ex.: manter pluviométrico rodando)
+
+```bash
+docker stop prefect-bigquery-meteorologicos
+# ou
+docker compose stop prefect-meteorologicos
+```
+
+Religar depois:
+
+```bash
+docker start prefect-bigquery-meteorologicos
+# ou
+docker compose start prefect-meteorologicos
+```
+
+#### Evitar subir dois modos ao mesmo tempo
+
+Não mantenha `prefect-service` (combinado) **e** um dos workers dedicados executando o mesmo tipo de sincronização sem necessidade — pode duplicar carga no NIMBUS/BigQuery. Para operação “só um tipo”, prefira **apenas** `prefect-server` + `prefect-pluviometricos` **ou** `prefect-server` + `prefect-meteorologicos`.
+
+Parar tudo Compose da stack:
+
+```bash
+docker compose down
 ```
 
 ### O que roda
 
-- **Workflow padrão**: `combinado` (pluviométricos + meteorológicos em uma única execução).
+- **Workflow padrão** (`prefect-service`): `combinado` (pluviométricos + meteorológicos em uma única execução).
 - **Intervalo padrão**: 5 minutos (ajuste automático se uma execução passar de 5 min).
-- **Estado**: persistido em `scripts/prefect/.prefect_service_state.json`.
+- **Estado**: persistido em `scripts/prefect/state/` (por serviço: `combinado.json`, `pluviometricos.json`, `meteorologicos.json`).
 
 ### Variáveis de ambiente (Docker)
 
@@ -46,9 +99,7 @@ Exemplo com intervalo de 10 minutos:
 PREFECT_INTERVALO=10 docker-compose up -d
 ```
 
-Documentação detalhada do serviço: **`INSTALACAO_SERVICO.md`**.
-
-**Guia passo a passo para rodar no Docker (instalar Docker, subir container):** **`COMO_RODAR_DOCKER.md`** (na raiz do projeto).
+Documentação adicional: [Automação — Guia Completo](../../docs/AUTOMACAO_GUIA_COMPLETO.md) e [Prefect — Guia Completo](../../docs/PREFECT_GUIA_COMPLETO.md).
 
 ---
 
@@ -170,4 +221,4 @@ O `tasks.py` contém a task `executar_inferencia_ia` em modo **STUB**. Quando o 
 
 ## 📖 Mais informações
 
-- **Instalação do serviço (Docker e systemd)**: `INSTALACAO_SERVICO.md`
+- **Docker, Prefect e operação**: [docs/AUTOMACAO_GUIA_COMPLETO.md](../../docs/AUTOMACAO_GUIA_COMPLETO.md)

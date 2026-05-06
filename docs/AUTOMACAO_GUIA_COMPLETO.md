@@ -9,8 +9,9 @@ Este projeto não utiliza mais cron como caminho recomendado.
 
 1. [Visão Geral](#visão-geral)
 2. [Configuração Prefect + Docker](#configuração-prefect--docker)
-3. [Operação Diária](#operação-diária)
-4. [Troubleshooting](#troubleshooting)
+3. [Docker: só pluviométricos, só meteorológicos ou combinado](#docker-só-pluviométricos-só-meteorológicos-ou-combinado)
+4. [Operação Diária](#operação-diária)
+5. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -45,10 +46,15 @@ cd automacao
 
 ### 2) Subir serviços
 
+Na raiz do projeto (onde está o `docker-compose.yml`):
+
 ```bash
-cd ..
 docker compose up -d
 ```
+
+O comando acima sobe o perfil padrão definido no Compose (em geral inclui o **`prefect-service`**, workflow **combinado**: pluviométricos + meteorológicos).
+
+Para escolher explicitamente **somente pluviométricos**, **somente meteorológicos** ou **combinado**, use a seção [Docker: só pluviométricos, só meteorológicos ou combinado](#docker-só-pluviométricos-só-meteorológicos-ou-combinado).
 
 ### 3) Verificar containers
 
@@ -79,6 +85,75 @@ SMTP_STARTTLS=true
 
 ---
 
+## Docker: só pluviométricos, só meteorológicos ou combinado
+
+O `docker-compose.yml` define estes serviços relevantes:
+
+| Serviço | Container (nome) | O que executa |
+|---------|------------------|---------------|
+| `prefect-server` | `prefect-server-local` | API/UI do Prefect (`http://localhost:4200`) |
+| `prefect-service` | `prefect-bigquery-sync` | Incremental **combinado** (pluviométricos + meteorológicos) |
+| `prefect-pluviometricos` | `prefect-bigquery-pluviometricos` | Incremental **apenas** pluviométricos |
+| `prefect-meteorologicos` | `prefect-bigquery-meteorologicos` | Incremental **apenas** meteorológicos |
+
+Os workers (`prefect-service`, `prefect-pluviometricos`, `prefect-meteorologicos`) dependem do `prefect-server`.
+
+### Somente pluviométricos (sem meteorológicos)
+
+```bash
+docker compose up -d prefect-server prefect-pluviometricos
+docker compose logs -f prefect-pluviometricos
+```
+
+### Somente meteorológicos (sem pluviométricos)
+
+```bash
+docker compose up -d prefect-server prefect-meteorologicos
+docker compose logs -f prefect-meteorologicos
+```
+
+### Combinado (pluviométricos + meteorológicos em um único worker)
+
+```bash
+docker compose up -d prefect-server prefect-service
+docker compose logs -f prefect-service
+```
+
+### Ambos workers dedicados (pluviométricos e meteorológicos em paralelo)
+
+Útil quando você **não** quer o combinado e prefere dois processos independentes:
+
+```bash
+docker compose up -d --build prefect-server prefect-pluviometricos prefect-meteorologicos
+```
+
+### Parar só um worker (ex.: manutenção na tabela meteorológica)
+
+Sem derrubar o servidor Prefect nem o outro tipo de sync:
+
+```bash
+docker compose stop prefect-meteorologicos
+# ou, pelo nome do container:
+docker stop prefect-bigquery-meteorologicos
+```
+
+Para religar:
+
+```bash
+docker compose start prefect-meteorologicos
+```
+
+### Evitar trabalho duplicado
+
+Não mantenha o **`prefect-service` (combinado)** rodando ao mesmo tempo que os workers **`prefect-pluviometricos`** e **`prefect-meteorologicos`** se o objetivo for “um único modo”. Isso pode **duplicar** execuções e carga contra NIMBUS/BigQuery. Escolha **uma** estratégia:
+
+- só **combinado** (`prefect-server` + `prefect-service`), ou  
+- só **dedicados** (`prefect-server` + um ou dois workers dedicados).
+
+Mais detalhes e comandos auxiliares: [`scripts/prefect/README.md`](../scripts/prefect/README.md).
+
+---
+
 ## 🔍 Operação Diária
 
 ### Verificar logs
@@ -95,10 +170,25 @@ docker compose logs -f prefect-meteorologicos
 docker compose restart prefect-service
 ```
 
+Reinício apenas do worker meteorológico ou pluviométrico dedicado:
+
+```bash
+docker compose restart prefect-meteorologicos
+docker compose restart prefect-pluviometricos
+```
+
 ### Atualizar imagem/código e reaplicar
+
+Reconstrói e sobe todos os serviços do Compose declarados ao subir (depende do que estiver rodando):
 
 ```bash
 docker compose up -d --build
+```
+
+Exemplo reconstruir **somente** o par servidor + meteorológicos:
+
+```bash
+docker compose up -d --build prefect-server prefect-meteorologicos
 ```
 
 ---
@@ -138,7 +228,7 @@ docker compose up -d --build
 1. Sempre teste `--run-once` após alterar scripts
 2. Monitore logs diariamente na primeira semana
 3. Configure alerta por e-mail antes de produção
-4. Use `prefect-service` como padrão e flows dedicados quando necessário
+4. Use **`prefect-service` (combinado)** como padrão operacional completo; use **`prefect-pluviometricos`** ou **`prefect-meteorologicos`** quando precisar isolar um tipo de dado ou pausar só uma pipeline
 
 ---
 
