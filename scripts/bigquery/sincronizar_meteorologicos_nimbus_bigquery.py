@@ -643,14 +643,16 @@ def sincronizar_incremental():
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
             
-            # Converter colunas numéricas - manter tipo original do banco (não forçar float64)
-            # O banco pode retornar INTEGER ou NUMERIC, manter como vem
+            # Garantir colunas numéricas como float64 para manter contrato com schema BigQuery (FLOAT64).
             colunas_numericas = ['chuva', 'dirVento', 'velVento', 'temperatura', 'pressao', 'umidade', 'ponto_orvalho']
+            colunas_numericas_lower = {c.lower() for c in colunas_numericas}
             for col in colunas_numericas:
                 if col in chunk_df.columns:
-                    # Converter para numérico mas manter tipo original (int se for int, float se for float)
-                    chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce')
-                    # Não forçar float64 - manter tipo original (pode ser int64 ou float64)
+                    chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
+            # PostgreSQL pode retornar aliases sem aspas em minúsculas (ex.: dirVento -> dirvento).
+            for col in chunk_df.columns:
+                if col.lower() in colunas_numericas_lower:
+                    chunk_df[col] = pd.to_numeric(chunk_df[col], errors='coerce').astype('float64')
             
             # Filtrar registros com dia_utc NULL
             registros_antes = len(chunk_df)
@@ -681,6 +683,12 @@ def sincronizar_incremental():
                 registros_depois_batch = len(df_batch)
                 if registros_antes_batch != registros_depois_batch:
                     print(f"      ⚠️  Removidas {registros_antes_batch - registros_depois_batch} duplicatas no batch {batch_file_num}")
+                for col in colunas_numericas:
+                    if col in df_batch.columns:
+                        df_batch[col] = pd.to_numeric(df_batch[col], errors='coerce').astype('float64')
+                for col in df_batch.columns:
+                    if col.lower() in colunas_numericas_lower:
+                        df_batch[col] = pd.to_numeric(df_batch[col], errors='coerce').astype('float64')
                 batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
                 df_batch.to_parquet(
                     batch_file, 
@@ -707,6 +715,12 @@ def sincronizar_incremental():
             if registros_antes_final != registros_depois_final:
                 print(f"      ⚠️  Removidas {registros_antes_final - registros_depois_final} duplicatas no batch final")
             if len(df_batch) > 0:
+                for col in colunas_numericas:
+                    if col in df_batch.columns:
+                        df_batch[col] = pd.to_numeric(df_batch[col], errors='coerce').astype('float64')
+                for col in df_batch.columns:
+                    if col.lower() in colunas_numericas_lower:
+                        df_batch[col] = pd.to_numeric(df_batch[col], errors='coerce').astype('float64')
                 batch_file = Path(temp_dir) / f'{table_id}_batch_{batch_file_num:04d}.parquet'
                 df_batch.to_parquet(
                     batch_file, 

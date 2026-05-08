@@ -12,10 +12,11 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import psycopg2
 import pytz
@@ -30,50 +31,154 @@ from constants import PROJECT_ROOT
 # Execução de scripts de sincronização
 # ---------------------------------------------------------------------------
 
-def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: int = 1800) -> Dict:
+_ALIAS_TIPO_DADO_TIMEOUT = {
+    "pluviometricos": ("PLUVIOMETRICOS", "PLUVIO"),
+    "meteorologicos": ("METEOROLOGICOS", "METEO"),
+}
+
+
+def _resolver_timeout_sincronizacao(tipo_dado: str, timeout_padrao: int) -> int:
+    """Resolve timeout por variável de ambiente, mantendo padrão conservador.
+
+    Aceita aliases comuns no .env (ex.: ``PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIO``
+    além do nome canônico ``PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIOMETRICOS``),
+    para tolerar pequenas inconsistências de nomenclatura sem quebrar.
+    """
+    aliases = _ALIAS_TIPO_DADO_TIMEOUT.get(tipo_dado.lower(), (tipo_dado.upper(),))
+    chaves: List[str] = [f"PREFECT_SYNC_TIMEOUT_SECONDS_{alias}" for alias in aliases]
+    chaves.append("PREFECT_SYNC_TIMEOUT_SECONDS")
+
+    chave_usada: Optional[str] = None
+    valor: Optional[str] = None
+    for chave in chaves:
+        candidato = os.getenv(chave)
+        if candidato:
+            chave_usada = chave
+            valor = candidato
+            break
+
+    if not valor:
+        return timeout_padrao
+
+    try:
+        timeout_configurado = int(valor)
+        if timeout_configurado <= 0:
+            raise ValueError
+        return timeout_configurado
+    except ValueError:
+        print(f"⚠️  Timeout inválido em {chave_usada}: {valor!r}")
+        print(f"   Usando timeout padrão de {timeout_padrao // 60} minutos")
+        return timeout_padrao
+
+
+def _consumir_stream_em_thread(stream, buffer: List[str], prefixo: str) -> threading.Thread:
+    """Lê linhas de um stream em background, reemite com prefixo e armazena no buffer.
+
+    Permite acompanhar logs do subprocesso em tempo real (no stdout do pai)
+    mesmo que o subprocesso fique pendurado por minutos antes de terminar.
+    """
+    def _worker():
+        try:
+            for raw in iter(stream.readline, b""):
+                try:
+                    linha = raw.decode("utf-8", errors="replace")
+                except Exception:
+                    linha = repr(raw)
+                if not linha:
+                    continue
+                buffer.append(linha)
+                texto = linha.rstrip("\n")
+                if texto:
+                    print(f"{prefixo}{texto}", flush=True)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return thread
+
+
+def _heartbeat_em_thread(processo, stop_event: threading.Event, intervalo_segundos: int = 60) -> threading.Thread:
+    """Imprime um 'heartbeat' periódico enquanto o subprocesso estiver vivo.
+
+    Sem isso, ficamos sem nenhum sinal de vida quando o filho fica preso
+    em uma query NIMBUS por 30 min.
+    """
+    inicio = datetime.now()
+
+    def _worker():
+        while not stop_event.wait(intervalo_segundos):
+            if processo.poll() is not None:
+                return
+            decorrido = (datetime.now() - inicio).total_seconds()
+            print(
+                f"   ⏳ Subprocesso ainda em execução após {decorrido / 60:.1f} min "
+                f"(pid={processo.pid}). Aguardando saída...",
+                flush=True,
+            )
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return thread
+
+
+def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: int = 3600) -> Dict:
     """Executa um script de sincronização e retorna resultado padronizado.
 
     Args:
         script_path: Caminho para o script Python a ser executado.
         tipo_dado: Tipo de dado ('pluviometricos' ou 'meteorologicos').
-        timeout: Timeout em segundos (padrão: 1800 = 30 min).
+        timeout: Timeout em segundos (padrão: 3600 = 60 min).
 
     Returns:
         Dict com 'sucesso', 'tempo_segundos', 'registros_processados', etc.
     """
+    process: Optional[subprocess.Popen] = None
+    stdout_buffer: List[str] = []
+    stderr_buffer: List[str] = []
+    stop_heartbeat = threading.Event()
+
     try:
+        timeout = _resolver_timeout_sincronizacao(tipo_dado, timeout)
         print(f"🔄 Iniciando sincronização incremental de {tipo_dado}...")
         print(f"   Script: {script_path}")
         print(f"   Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   Timeout configurado: {timeout // 60} minutos")
 
         inicio = datetime.now()
 
         env = os.environ.copy()
         env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUNBUFFERED'] = '1'
 
         process = subprocess.Popen(
-            [sys.executable, str(script_path), '--once'],
+            [sys.executable, '-u', str(script_path), '--once'],
             cwd=str(PROJECT_ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            bufsize=0,
+            bufsize=1,
         )
 
-        stdout_bytes, stderr_bytes = process.communicate(timeout=timeout)
-        return_code = process.returncode
+        thread_stdout = _consumir_stream_em_thread(process.stdout, stdout_buffer, prefixo="   │ ")
+        thread_stderr = _consumir_stream_em_thread(process.stderr, stderr_buffer, prefixo="   ! ")
+        thread_heartbeat = _heartbeat_em_thread(process, stop_heartbeat, intervalo_segundos=60)
+
+        try:
+            return_code = process.wait(timeout=timeout)
+        finally:
+            stop_heartbeat.set()
+            thread_stdout.join(timeout=5)
+            thread_stderr.join(timeout=5)
+            thread_heartbeat.join(timeout=2)
 
         tempo_decorrido = (datetime.now() - inicio).total_seconds()
 
-        try:
-            stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
-        except Exception as e:
-            stdout_text = f"[Erro ao decodificar stdout: {type(e).__name__}: {str(e)[:100]}]"
-
-        try:
-            stderr_text = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
-        except Exception as e:
-            stderr_text = f"[Erro ao decodificar stderr: {type(e).__name__}: {str(e)[:100]}]"
+        stdout_text = "".join(stdout_buffer)
+        stderr_text = "".join(stderr_buffer)
 
         output_completo = stdout_text + stderr_text
         erros_detectados = []
@@ -142,13 +247,48 @@ def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: in
     except subprocess.TimeoutExpired:
         print(f"⏱️  TIMEOUT: Sincronização demorou mais de {timeout // 60} minutos")
         print(f"   Isso pode indicar problema de conexão ou volume muito grande de dados")
+
+        stop_heartbeat.set()
+
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+                process.wait(timeout=10)
+            except Exception as kill_err:
+                print(f"   ⚠️  Falha ao encerrar subprocesso travado: {kill_err}")
+
+        stdout_text = "".join(stdout_buffer)
+        stderr_text = "".join(stderr_buffer)
+
+        if stdout_text.strip():
+            print("\n   📋 Últimas linhas do stdout antes do timeout:")
+            for line in stdout_text.split('\n')[-20:]:
+                if line.strip():
+                    print(f"      {line}")
+        else:
+            print("\n   📋 stdout do filho ficou vazio até o timeout (provável travamento antes do primeiro print).")
+
+        if stderr_text.strip():
+            print("\n   📋 Últimas linhas do stderr antes do timeout:")
+            for line in stderr_text.split('\n')[-20:]:
+                if line.strip():
+                    print(f"      {line}")
+
         return {
             'sucesso': False,
             'tempo_segundos': timeout,
             'mensagem': f'Timeout após {timeout // 60} minutos',
             'erros_detectados': [f'TIMEOUT: Processo demorou mais de {timeout // 60} minutos'],
+            'stdout': stdout_text[-1000:] if len(stdout_text) > 1000 else stdout_text,
+            'stderr': stderr_text[-1000:] if len(stderr_text) > 1000 else stderr_text,
         }
     except Exception as e:
+        stop_heartbeat.set()
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+            except Exception:
+                pass
         print(f"❌ ERRO FATAL ao executar sincronização incremental: {e}")
         traceback.print_exc()
         return {
