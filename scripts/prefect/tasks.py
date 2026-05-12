@@ -15,6 +15,7 @@ Organização:
 import os
 import traceback
 from pathlib import Path
+from typing import Optional
 
 import psycopg2
 from dotenv import load_dotenv
@@ -111,10 +112,18 @@ def sincronizar_pluviometricos() -> dict:
 
 
 @task(name="Sincronização Incremental Meteorológicos", log_prints=True, retries=2, retry_delay_seconds=60)
-def sincronizar_meteorologicos() -> dict:
+def sincronizar_meteorologicos(
+    timeout_floor: Optional[int] = None,
+    timeout_segundos: Optional[int] = None,
+) -> dict:
     """Executa a sincronização incremental de dados meteorológicos."""
     script_path = PROJECT_ROOT / SCRIPT_SYNC_METEO
-    return executar_script_sincronizacao(script_path, Tabela.METEOROLOGICOS.value)
+    return executar_script_sincronizacao(
+        script_path,
+        Tabela.METEOROLOGICOS.value,
+        timeout_floor=timeout_floor,
+        timeout_segundos_efetivo=timeout_segundos,
+    )
 
 
 # ---------------------------------------------------------------------------

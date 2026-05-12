@@ -54,6 +54,28 @@ from tasks import (
     verificar_status_meteorologicos,
     verificar_status_pluviometricos,
 )
+from utils import timeout_efetivo_sync_meteorologicos
+
+
+def _aplicar_timeout_meteo_no_ambiente(timeout_segundos: int) -> dict:
+    """Grava timeout meteorológico no ambiente e devolve backup para restauração."""
+    chaves = (
+        "PREFECT_SYNC_TIMEOUT_SECONDS_METEOROLOGICOS",
+        "PREFECT_SYNC_TIMEOUT_SECONDS_METEO",
+    )
+    backup = {k: os.environ.get(k) for k in chaves}
+    valor = str(int(timeout_segundos))
+    for k in chaves:
+        os.environ[k] = valor
+    return backup
+
+
+def _restaurar_timeout_meteo_no_ambiente(backup: dict) -> None:
+    for k, v in backup.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +218,13 @@ def sincronizacao_meteorologicos_flow() -> dict:
     print()
 
     print("📦 Executando sincronização incremental...")
-    resultado_sync = sincronizar_meteorologicos()
+    timeout_meteo_s = timeout_efetivo_sync_meteorologicos(resultado_lacunas)
+    print(f"   ⏱️  Timeout alvo (env + lacuna): {timeout_meteo_s // 60} min ({timeout_meteo_s} s)")
+    backup_to = _aplicar_timeout_meteo_no_ambiente(timeout_meteo_s)
+    try:
+        resultado_sync = sincronizar_meteorologicos(timeout_segundos=timeout_meteo_s)
+    finally:
+        _restaurar_timeout_meteo_no_ambiente(backup_to)
     sucesso_sync   = resultado_sync.get('sucesso', False)
 
     print()
@@ -291,8 +319,19 @@ def sincronizacao_combinada_flow() -> dict:
 
     print()
 
+    print("🌤️  Verificando lacunas meteorológicos...")
+    resultado_lacunas_meteo = verificar_lacunas_meteorologicos()
+
+    print()
+
     print("🌤️  Executando sincronização METEOROLÓGICOS...")
-    resultado_meteo = sincronizar_meteorologicos()
+    timeout_meteo_s = timeout_efetivo_sync_meteorologicos(resultado_lacunas_meteo)
+    print(f"   ⏱️  Timeout alvo (env + lacuna): {timeout_meteo_s // 60} min ({timeout_meteo_s} s)")
+    backup_to = _aplicar_timeout_meteo_no_ambiente(timeout_meteo_s)
+    try:
+        resultado_meteo = sincronizar_meteorologicos(timeout_segundos=timeout_meteo_s)
+    finally:
+        _restaurar_timeout_meteo_no_ambiente(backup_to)
     sucesso_meteo   = resultado_meteo.get('sucesso', False)
 
     print()

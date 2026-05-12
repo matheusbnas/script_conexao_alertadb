@@ -37,6 +37,56 @@ _ALIAS_TIPO_DADO_TIMEOUT = {
 }
 
 
+def timeout_floor_sync_meteorologicos(resultado_lacunas: Optional[Dict]) -> Optional[int]:
+    """Piso de timeout (segundos) quando a lacuna é grande.
+
+    Evita que um ``PREFECT_SYNC_TIMEOUT_SECONDS`` baixo (ex.: 30 min) mate o
+    subprocesso durante recuperação de atraso com muitos registros pendentes.
+
+    O piso usa **pendentes** e **diferença em dias**, não só ``lacunas_detectadas``:
+    após serialização (Prefect/API), booleanos às vezes não voltam fiéis e o piso
+    seria ignorado, reaplicando um timeout curto do ambiente.
+    """
+    if not resultado_lacunas:
+        return None
+    try:
+        pendentes = int(resultado_lacunas.get('total_registros_pendentes') or 0)
+    except (TypeError, ValueError):
+        pendentes = 0
+    try:
+        dias = int(resultado_lacunas.get('diferenca_dias') or 0)
+    except (TypeError, ValueError):
+        dias = 0
+    lacunas_flag = resultado_lacunas.get('lacunas_detectadas')
+    tem_flag = lacunas_flag in (True, 1, '1', 'true', 'True')
+    if pendentes <= 0 and not tem_flag and dias < 1:
+        return None
+
+    # Patamares: cargas de dezenas de milhares de linhas costumam exceder 1–2 h
+    # (NIMBUS + MERGE no BigQuery).
+    if pendentes >= 25_000 or dias >= 3:
+        return 14_400  # 4 h
+    if pendentes >= 15_000 or dias >= 2:
+        return 10_800  # 3 h
+    if pendentes >= 5_000 or dias >= 1:
+        return 7200  # 2 h
+    if pendentes > 0:
+        return 5400  # 90 min — alinhado ao padrão docker-compose
+    return None
+
+
+def timeout_efetivo_sync_meteorologicos(resultado_lacunas: Optional[Dict]) -> int:
+    """Timeout (segundos) do subprocesso meteorológico: max(env, piso por lacuna).
+
+    Calculado no *flow* e repassado como inteiro explícito à task para evitar que
+    ``timeout_floor`` se perca em serialização/registro antigo do Prefect, deixando
+    apenas o valor curto do ``.env`` (ex.: 30 min).
+    """
+    base = _resolver_timeout_sincronizacao("meteorologicos", 5400)
+    floor_val = timeout_floor_sync_meteorologicos(resultado_lacunas) or 0
+    return max(base, floor_val)
+
+
 def _resolver_timeout_sincronizacao(tipo_dado: str, timeout_padrao: int) -> int:
     """Resolve timeout por variável de ambiente, mantendo padrão conservador.
 
@@ -125,13 +175,21 @@ def _heartbeat_em_thread(processo, stop_event: threading.Event, intervalo_segund
     return thread
 
 
-def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: int = 3600) -> Dict:
+def executar_script_sincronizacao(
+    script_path: Path,
+    tipo_dado: str,
+    timeout: int = 5400,
+    timeout_floor: Optional[int] = None,
+    timeout_segundos_efetivo: Optional[int] = None,
+) -> Dict:
     """Executa um script de sincronização e retorna resultado padronizado.
 
     Args:
         script_path: Caminho para o script Python a ser executado.
         tipo_dado: Tipo de dado ('pluviometricos' ou 'meteorologicos').
-        timeout: Timeout em segundos (padrão: 3600 = 60 min).
+        timeout: Timeout em segundos (padrão: 5400 = 90 min, alinhado ao docker-compose).
+        timeout_floor: Se definido, o timeout efetivo não fica abaixo deste valor (segundos).
+        timeout_segundos_efetivo: Se definido (>0), substitui env+piso (uso pelo flow meteo).
 
     Returns:
         Dict com 'sucesso', 'tempo_segundos', 'registros_processados', etc.
@@ -142,7 +200,22 @@ def executar_script_sincronizacao(script_path: Path, tipo_dado: str, timeout: in
     stop_heartbeat = threading.Event()
 
     try:
-        timeout = _resolver_timeout_sincronizacao(tipo_dado, timeout)
+        if timeout_segundos_efetivo is not None and int(timeout_segundos_efetivo) > 0:
+            timeout = int(timeout_segundos_efetivo)
+            print(
+                f"   ⏱️  Timeout efetivo (definido pelo flow): {timeout // 60} minutos",
+                flush=True,
+            )
+        else:
+            timeout = _resolver_timeout_sincronizacao(tipo_dado, timeout)
+            if timeout_floor is not None and timeout_floor > 0:
+                antes = timeout
+                timeout = max(timeout, timeout_floor)
+                if timeout > antes:
+                    print(
+                        f"   ⏱️  Lacuna grande: elevando timeout de {antes // 60} para {timeout // 60} minutos",
+                        flush=True,
+                    )
         print(f"🔄 Iniciando sincronização incremental de {tipo_dado}...")
         print(f"   Script: {script_path}")
         print(f"   Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

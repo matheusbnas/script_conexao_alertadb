@@ -17,10 +17,10 @@ ARQUITETURA:
               ↑ [ESTE SCRIPT - SINCRONIZAÇÃO INCREMENTAL]
 
 QUERY UTILIZADA:
-    ✅ GROUP BY (l."horaLeitura", l.estacao_id, e.nome)
-    ✅ WHERE horaLeitura > ultima_sincronizacao (apenas dados novos)
-    ✅ ORDER BY l."horaLeitura"
-    ✅ Mesmo SQL que exportar_meteorologicos_nimbus_bigquery (meteorologicos_nimbus_queries.py)
+    ✅ CTE filtrando estacoes_leitura + estação antes do join em leiturasensor
+    ✅ Agregação com FILTER (equivalente ao GROUP BY + MAX(CASE...))
+    ✅ ponto_orvalho calculado na camada externa (menos custo no plano)
+    ✅ Sem ORDER BY na incremental (evita sort global no PostgreSQL)
 
 VANTAGENS:
     ✅ Sincronização incremental (apenas dados novos)
@@ -231,6 +231,10 @@ def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
     IMPORTANTE: ultima_sincronizacao deve estar em UTC (vem de obter_ultima_sincronizacao_bigquery).
     
     Se ultimas_por_estacao for fornecido, usa filtro por estação para evitar duplicações.
+
+    Desempenho no NIMBUS: ajuda muito índice em ``estacoes_leitura`` que cubra
+    ``(estacao_id, "horaLeitura")`` ou ``("horaLeitura")`` e índice em
+    ``estacoes_leiturasensor(leitura_id)``.
     """
     # Converter timestamp UTC para timestamptz do PostgreSQL
     if isinstance(ultima_sincronizacao, datetime):
@@ -271,76 +275,78 @@ def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
     else:
         # Usar filtro geral (fallback)
         where_clause = f"l.\"horaLeitura\" > '{timestamp_str}'::timestamptz"
-    
+
+    # Query otimizada vs. partida em estacoes_leiturasensor:
+    # - CTE "leituras_novas" restringe primeiro por hora/estação (melhor uso de índice em leitura).
+    # - Agregados com FILTER (PostgreSQL) equivalentes aos MAX(CASE...).
+    # - ponto_orvalho na camada externa (menos trabalho repetido no plano).
+    # - Sem ORDER BY: o carregamento no BigQuery não depende da ordem; evita sort caro no NIMBUS.
     return f"""
+WITH leituras_novas AS (
+    SELECT
+        l.id AS leitura_id,
+        l."horaLeitura",
+        l.estacao_id,
+        e.nome AS nome_estacao
+    FROM public.estacoes_leitura l
+    JOIN public.estacoes_estacao e ON e.id = l.estacao_id
+    WHERE {where_clause}
+      AND e.id IN (1,11,16,19,20,22,28,32)
+)
 SELECT
-    l."horaLeitura" AS data_hora,  -- simples e já com timezone correto
-    l.estacao_id AS id_estacao,
-    e.nome       AS nome_estacao,
-    MAX(
-        CASE
-            -- Até jan/2020 todas as estações usam coleta de 15 min (m15).
-            WHEN l."horaLeitura" < TIMESTAMPTZ '2020-02-01 00:00:00+00' THEN elc.m15
-            -- Guaratiba/São Cristóvão iniciam coleta de 5 min em mar/2020.
-            WHEN (
-                e.nome ILIKE 'Guaratiba%%'
-                OR e.nome ILIKE 'Sao Cristovao%%'
-                OR e.nome ILIKE 'São Cristóvão%%'
-            ) AND l."horaLeitura" < TIMESTAMPTZ '2020-03-01 00:00:00+00' THEN elc.m15
-            -- Demais casos já em 5 min.
-            ELSE elc.m05
-        END
-    ) AS chuva,
-    MAX(CASE WHEN s.nome = 'Direcao do Vento'      THEN ls.valor END) AS dirVento,
-    MAX(CASE WHEN s.nome = 'Velocidade do Vento'   THEN ls.valor END) AS velVento,
-    MAX(CASE WHEN s.nome = 'Temperatuda do Ar'     THEN ls.valor END) AS temperatura,
-    MAX(CASE WHEN s.nome = 'Pressao ATM'           THEN ls.valor END) AS pressao,
-    MAX(CASE WHEN s.nome = 'Umidade do Ar'         THEN ls.valor END) AS umidade,
+    sub.data_hora,
+    sub.id_estacao,
+    sub.nome_estacao,
+    sub.chuva,
+    sub."dirVento",
+    sub."velVento",
+    sub.temperatura,
+    sub.pressao,
+    sub.umidade,
     CASE
-        WHEN MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END) IS NULL
-          OR MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) IS NULL
-          OR MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) <= 0
-        THEN NULL
+        WHEN sub.temperatura IS NULL OR sub.umidade IS NULL OR sub.umidade <= 0 THEN NULL
         ELSE (
             243.04 * (
-                LN(MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) / 100.0) +
-                (
-                    17.625 * MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
-                ) / (
-                    243.04 + MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
-                )
+                LN(sub.umidade / 100.0)
+                + (17.625 * sub.temperatura) / (243.04 + sub.temperatura)
             )
         ) / (
             17.625 - (
-                LN(MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) / 100.0) +
-                (
-                    17.625 * MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
-                ) / (
-                    243.04 + MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END)
-                )
+                LN(sub.umidade / 100.0)
+                + (17.625 * sub.temperatura) / (243.04 + sub.temperatura)
             )
         )
     END AS ponto_orvalho
-
-FROM public.estacoes_leiturasensor ls
-JOIN public.estacoes_leitura l
-      ON ls.leitura_id = l.id
-LEFT JOIN public.estacoes_leiturachuva elc
-      ON elc.leitura_id = l.id
-JOIN public.estacoes_sensor s
-      ON ls.sensor_id = s.id
-JOIN public.estacoes_estacao e
-      ON e.id = l.estacao_id
-
-WHERE {where_clause}
-  AND e.id IN (1,11,16,19,20,22,28,32)
-
-GROUP BY
-    l."horaLeitura",
-    l.estacao_id,
-    e.nome
-
-ORDER BY l."horaLeitura";
+FROM (
+    SELECT
+        ln."horaLeitura" AS data_hora,
+        ln.estacao_id AS id_estacao,
+        ln.nome_estacao AS nome_estacao,
+        MAX(
+            CASE
+                WHEN ln."horaLeitura" < TIMESTAMPTZ '2020-02-01 00:00:00+00' THEN elc.m15
+                WHEN (
+                    ln.nome_estacao ILIKE 'Guaratiba%%'
+                    OR ln.nome_estacao ILIKE 'Sao Cristovao%%'
+                    OR ln.nome_estacao ILIKE 'São Cristóvão%%'
+                ) AND ln."horaLeitura" < TIMESTAMPTZ '2020-03-01 00:00:00+00' THEN elc.m15
+                ELSE elc.m05
+            END
+        ) AS chuva,
+        MAX(ls.valor) FILTER (WHERE s.nome = 'Direcao do Vento') AS "dirVento",
+        MAX(ls.valor) FILTER (WHERE s.nome = 'Velocidade do Vento') AS "velVento",
+        MAX(ls.valor) FILTER (WHERE s.nome = 'Temperatuda do Ar') AS temperatura,
+        MAX(ls.valor) FILTER (WHERE s.nome = 'Pressao ATM') AS pressao,
+        MAX(ls.valor) FILTER (WHERE s.nome = 'Umidade do Ar') AS umidade
+    FROM leituras_novas ln
+    JOIN public.estacoes_leiturasensor ls ON ls.leitura_id = ln.leitura_id
+    JOIN public.estacoes_sensor s ON ls.sensor_id = s.id
+    LEFT JOIN public.estacoes_leiturachuva elc ON elc.leitura_id = ln.leitura_id
+    GROUP BY
+        ln."horaLeitura",
+        ln.estacao_id,
+        ln.nome_estacao
+) sub
 """
 
 def obter_schema_meteorologicos():
