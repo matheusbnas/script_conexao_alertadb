@@ -61,7 +61,7 @@ Variáveis opcionais:
 
 import psycopg2
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from urllib.parse import quote_plus
 from google.cloud import bigquery
@@ -482,7 +482,7 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
         
         while tentativa_global < max_retries:
             try:
-                chunk_iterator = pd.read_sql(query, engine_ref['engine'], chunksize=chunksize)
+                chunk_iterator = pd.read_sql(text(query), engine_ref['engine'], chunksize=chunksize)
                 for chunk_df in chunk_iterator:
                     yield chunk_df
                 return

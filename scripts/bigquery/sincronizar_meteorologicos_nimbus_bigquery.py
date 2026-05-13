@@ -69,7 +69,7 @@ VANTAGENS:
 
 import psycopg2
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
@@ -503,7 +503,7 @@ def sincronizar_incremental():
         batch_size = 2
         batch_file_num = 1
         
-        for chunk_df in pd.read_sql(query, engine_nimbus, chunksize=chunksize):
+        for chunk_df in pd.read_sql(text(query), engine_nimbus, chunksize=chunksize):
             print(f"   📦 Processando chunk {chunk_numero} ({len(chunk_df):,} registros)...")
             
             # Renomear colunas
