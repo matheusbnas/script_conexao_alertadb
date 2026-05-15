@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 load_dotenv(dotenv_path=project_root / '.env')
 
 from interval_manager import calcular_intervalo_ideal
+from utils import timeout_communicate_workflow_service
 
 # ---------------------------------------------------------------------------
 # Estado do serviço
@@ -217,6 +218,12 @@ def executar_workflow(workflow_tipo: str) -> Dict:
     print(f"   Script: {script_path}")
     print(f"   Início: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
 
+    communicate_timeout = timeout_communicate_workflow_service(workflow_tipo)
+    print(
+        f"   ⏱️  Limite do subprocesso (communicate): {communicate_timeout // 60} min "
+        f"({communicate_timeout} s) — ajuste PREFECT_SERVICE_WORKFLOW_TIMEOUT_SECONDS se necessário"
+    )
+
     def _prefect_api_disponivel() -> bool:
         """Valida conectividade TCP básica com PREFECT_API_URL para evitar timeouts longos."""
         api_url = (os.getenv("PREFECT_API_URL") or "").strip()
@@ -261,7 +268,7 @@ def executar_workflow(workflow_tipo: str) -> Dict:
             stderr=subprocess.PIPE,
             env=env,
         )
-        stdout_bytes, stderr_bytes = process.communicate(timeout=3600)
+        stdout_bytes, stderr_bytes = process.communicate(timeout=communicate_timeout)
         stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
         stderr_text = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
         return {
@@ -313,7 +320,7 @@ def executar_workflow(workflow_tipo: str) -> Dict:
                 env=env,
             )
 
-            stdout_bytes, stderr_bytes = process.communicate(timeout=3600)
+            stdout_bytes, stderr_bytes = process.communicate(timeout=communicate_timeout)
             tempo_decorrido = (datetime.now() - inicio).total_seconds()
             stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
             stderr_text = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
@@ -376,9 +383,26 @@ def executar_workflow(workflow_tipo: str) -> Dict:
 
         return ultima_saida
 
-    except subprocess.TimeoutExpired:
-        print(f"   ⏱️  TIMEOUT: Execução demorou mais de 1 hora")
-        return {'sucesso': False, 'tempo_segundos': 3600, 'return_code': -1, 'erro': 'Timeout após 1 hora'}
+    except subprocess.TimeoutExpired as e:
+        out_b = e.stdout or b""
+        err_b = e.stderr or b""
+        stdout_partial = out_b.decode("utf-8", errors="replace") if out_b else ""
+        stderr_partial = err_b.decode("utf-8", errors="replace") if err_b else ""
+        limite_min = communicate_timeout // 60
+        print(f"   ⏱️  TIMEOUT: subprocesso excedeu {limite_min} minutos ({communicate_timeout} s)")
+        if not stdout_partial.strip() and not stderr_partial.strip():
+            print(
+                "      (nenhuma saída capturada — buffer ainda vazio ou filho sem flush; "
+                "veja logs do worker Prefect / container)"
+            )
+        return {
+            'sucesso': False,
+            'tempo_segundos': float(communicate_timeout),
+            'return_code': -1,
+            'erro': f'Timeout após {limite_min} minutos ({communicate_timeout} s)',
+            'stdout': stdout_partial[-8000:] if len(stdout_partial) > 8000 else stdout_partial,
+            'stderr': stderr_partial[-8000:] if len(stderr_partial) > 8000 else stderr_partial,
+        }
     except Exception as e:
         print(f"   ❌ Erro ao executar: {e}")
         return {'sucesso': False, 'tempo_segundos': 0, 'return_code': -1, 'erro': str(e)}

@@ -354,9 +354,9 @@ SELECT
             WHEN l."horaLeitura" < TIMESTAMPTZ '2020-02-01 00:00:00+00' THEN elc.m15
             -- Guaratiba/São Cristóvão iniciam coleta de 5 min em mar/2020.
             WHEN (
-                e.nome ILIKE 'Guaratiba%%'
-                OR e.nome ILIKE 'Sao Cristovao%%'
-                OR e.nome ILIKE 'São Cristóvão%%'
+                e.nome ILIKE 'Guaratiba' || chr(37)
+                OR e.nome ILIKE 'Sao Cristovao' || chr(37)
+                OR e.nome ILIKE 'São Cristóvão' || chr(37)
             ) AND l."horaLeitura" < TIMESTAMPTZ '2020-03-01 00:00:00+00' THEN elc.m15
             -- Demais casos já em 5 min.
             ELSE elc.m05

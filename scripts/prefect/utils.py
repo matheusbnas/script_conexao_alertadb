@@ -121,6 +121,50 @@ def _resolver_timeout_sincronizacao(tipo_dado: str, timeout_padrao: int) -> int:
         return timeout_padrao
 
 
+# Maior valor retornado por ``timeout_floor_sync_meteorologicos`` (lacunas grandes).
+_METEO_SYNC_TIMEOUT_LACUNA_MAX_S = 14_400
+
+
+def timeout_communicate_workflow_service(workflow_tipo: str) -> int:
+    """Segundos para ``subprocess.Popen.communicate`` no ``service.py`` (wrapper do flow).
+
+    O limite antigo fixo (3600 s) era menor que o timeout padrão da sincronização
+    pluviométrica (5400 s), o que gerava falha com ``return_code -1``, duração ~1 h
+    e stdout/stderr vazios (timeout do pai antes do filho terminar).
+
+    Ordem de precedência:
+    1. ``PREFECT_SERVICE_WORKFLOW_TIMEOUT_SECONDS`` — inteiro > 0 substitui o cálculo.
+    2. Soma (ou máximo) dos timeouts de sync configurados + margem para lacunas/Prefect.
+    """
+    raw = (os.getenv("PREFECT_SERVICE_WORKFLOW_TIMEOUT_SECONDS") or "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+
+    try:
+        margem = int(os.getenv("PREFECT_SERVICE_WORKFLOW_TIMEOUT_MARGIN_SECONDS", "900"))
+    except ValueError:
+        margem = 900
+    margem = max(120, margem)
+
+    pluv = _resolver_timeout_sincronizacao("pluviometricos", 5400)
+    mete = _resolver_timeout_sincronizacao("meteorologicos", 5400)
+    mete_pior = max(mete, _METEO_SYNC_TIMEOUT_LACUNA_MAX_S)
+
+    w = (workflow_tipo or "").strip().lower()
+    if w == "pluviometricos":
+        return pluv + margem
+    if w == "meteorologicos":
+        return mete_pior + margem
+    if w == "combinado":
+        return pluv + mete_pior + margem
+    return max(pluv, mete_pior) + margem
+
+
 def _consumir_stream_em_thread(stream, buffer: List[str], prefixo: str) -> threading.Thread:
     """Lê linhas de um stream em background, reemite com prefixo e armazena no buffer.
 

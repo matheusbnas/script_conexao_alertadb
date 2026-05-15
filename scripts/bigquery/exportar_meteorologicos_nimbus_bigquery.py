@@ -61,7 +61,7 @@ Variáveis opcionais:
 
 import psycopg2
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from urllib.parse import quote_plus
 from google.cloud import bigquery
@@ -227,18 +227,18 @@ FROM (
             CASE
                 WHEN ln."horaLeitura" < TIMESTAMPTZ '2020-02-01 00:00:00+00' THEN elc.m15
                 WHEN (
-                    ln.nome_estacao ILIKE 'Guaratiba%%'
-                    OR ln.nome_estacao ILIKE 'Sao Cristovao%%'
-                    OR ln.nome_estacao ILIKE 'São Cristóvão%%'
+                    ln.nome_estacao ILIKE 'Guaratiba' || chr(37)
+                    OR ln.nome_estacao ILIKE 'Sao Cristovao' || chr(37)
+                    OR ln.nome_estacao ILIKE 'São Cristóvão' || chr(37)
                 ) AND ln."horaLeitura" < TIMESTAMPTZ '2020-03-01 00:00:00+00' THEN elc.m15
                 ELSE elc.m05
             END
         ) AS chuva,
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Direcao do Vento') AS "dirVento",
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Velocidade do Vento') AS "velVento",
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Temperatuda do Ar') AS temperatura,
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Pressao ATM') AS pressao,
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Umidade do Ar') AS umidade
+        MAX(CASE WHEN s.nome = 'Direcao do Vento' THEN ls.valor END) AS "dirVento",
+        MAX(CASE WHEN s.nome = 'Velocidade do Vento' THEN ls.valor END) AS "velVento",
+        MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END) AS temperatura,
+        MAX(CASE WHEN s.nome = 'Pressao ATM' THEN ls.valor END) AS pressao,
+        MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) AS umidade
     FROM leituras_periodo ln
     JOIN public.estacoes_leiturasensor ls ON ls.leitura_id = ln.leitura_id
     JOIN public.estacoes_sensor s ON ls.sensor_id = s.id
@@ -482,9 +482,13 @@ def processar_e_carregar_tabela_por_periodo(engine_nimbus, client_bq, dataset_id
         
         while tentativa_global < max_retries:
             try:
-                chunk_iterator = pd.read_sql(text(query), engine_ref['engine'], chunksize=chunksize)
-                for chunk_df in chunk_iterator:
-                    yield chunk_df
+                raw = engine_ref['engine'].raw_connection()
+                try:
+                    chunk_iterator = pd.read_sql(query, raw, chunksize=chunksize)
+                    for chunk_df in chunk_iterator:
+                        yield chunk_df
+                finally:
+                    raw.close()
                 return
             except (psycopg2.OperationalError, psycopg2.InterfaceError,
                     SQLAlchemyOperationalError) as e:

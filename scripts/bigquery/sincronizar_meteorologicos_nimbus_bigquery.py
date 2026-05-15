@@ -18,7 +18,7 @@ ARQUITETURA:
 
 QUERY UTILIZADA:
     ✅ CTE filtrando estacoes_leitura + estação antes do join em leiturasensor
-    ✅ Agregação com FILTER (equivalente ao GROUP BY + MAX(CASE...))
+    ✅ Agregação com MAX(CASE...) por sensor (compatível com PostgreSQL sem FILTER)
     ✅ ponto_orvalho calculado na camada externa (menos custo no plano)
     ✅ Sem ORDER BY na incremental (evita sort global no PostgreSQL)
 
@@ -69,7 +69,7 @@ VANTAGENS:
 
 import psycopg2
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
@@ -278,7 +278,7 @@ def query_dados_incrementais(ultima_sincronizacao, ultimas_por_estacao=None):
 
     # Query otimizada vs. partida em estacoes_leiturasensor:
     # - CTE "leituras_novas" restringe primeiro por hora/estação (melhor uso de índice em leitura).
-    # - Agregados com FILTER (PostgreSQL) equivalentes aos MAX(CASE...).
+    # - Agregados com MAX(CASE...) (compatível com PG antigo; sem FILTER).
     # - ponto_orvalho na camada externa (menos trabalho repetido no plano).
     # - Sem ORDER BY: o carregamento no BigQuery não depende da ordem; evita sort caro no NIMBUS.
     return f"""
@@ -326,18 +326,18 @@ FROM (
             CASE
                 WHEN ln."horaLeitura" < TIMESTAMPTZ '2020-02-01 00:00:00+00' THEN elc.m15
                 WHEN (
-                    ln.nome_estacao ILIKE 'Guaratiba%%'
-                    OR ln.nome_estacao ILIKE 'Sao Cristovao%%'
-                    OR ln.nome_estacao ILIKE 'São Cristóvão%%'
+                    ln.nome_estacao ILIKE 'Guaratiba' || chr(37)
+                    OR ln.nome_estacao ILIKE 'Sao Cristovao' || chr(37)
+                    OR ln.nome_estacao ILIKE 'São Cristóvão' || chr(37)
                 ) AND ln."horaLeitura" < TIMESTAMPTZ '2020-03-01 00:00:00+00' THEN elc.m15
                 ELSE elc.m05
             END
         ) AS chuva,
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Direcao do Vento') AS "dirVento",
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Velocidade do Vento') AS "velVento",
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Temperatuda do Ar') AS temperatura,
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Pressao ATM') AS pressao,
-        MAX(ls.valor) FILTER (WHERE s.nome = 'Umidade do Ar') AS umidade
+        MAX(CASE WHEN s.nome = 'Direcao do Vento' THEN ls.valor END) AS "dirVento",
+        MAX(CASE WHEN s.nome = 'Velocidade do Vento' THEN ls.valor END) AS "velVento",
+        MAX(CASE WHEN s.nome = 'Temperatuda do Ar' THEN ls.valor END) AS temperatura,
+        MAX(CASE WHEN s.nome = 'Pressao ATM' THEN ls.valor END) AS pressao,
+        MAX(CASE WHEN s.nome = 'Umidade do Ar' THEN ls.valor END) AS umidade
     FROM leituras_novas ln
     JOIN public.estacoes_leiturasensor ls ON ls.leitura_id = ln.leitura_id
     JOIN public.estacoes_sensor s ON ls.sensor_id = s.id
@@ -502,8 +502,18 @@ def sincronizar_incremental():
         chunks_list = []
         batch_size = 2
         batch_file_num = 1
-        
-        for chunk_df in pd.read_sql(text(query), engine_nimbus, chunksize=chunksize):
+
+        # Conexão DBAPI (psycopg2) evita ``sqlalchemy.text()`` + ``read_sql(..., chunksize)``,
+        # combinação que dispara ProgrammingError/f405 com SQL agregado complexo.
+        def _iter_sql_chunks(sql_literal: str):
+            raw = engine_nimbus.raw_connection()
+            try:
+                for ch in pd.read_sql(sql_literal, raw, chunksize=chunksize):
+                    yield ch
+            finally:
+                raw.close()
+
+        for chunk_df in _iter_sql_chunks(query):
             print(f"   📦 Processando chunk {chunk_numero} ({len(chunk_df):,} registros)...")
             
             # Renomear colunas
