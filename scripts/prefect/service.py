@@ -457,12 +457,38 @@ def loop_servico(workflow_tipo: str, intervalo_inicial_minutos: int = 5):
             tempo_execucao         = resultado.get('tempo_segundos', 0)
             tempo_execucao_minutos = tempo_execucao / 60
 
-            intervalo_calculado = calcular_intervalo_ideal(
-                tempo_execucao_segundos=tempo_execucao,
-                diferenca_dias=0,
-                total_registros_pendentes=0,
-                intervalo_padrao_minutos=intervalo_inicial_minutos,
-            )
+            def _resultado_contem_timeout(res: Dict) -> bool:
+                texto = ' '.join(
+                    str(res.get(key, '') or '').lower()
+                    for key in ('stdout', 'stderr', 'erro')
+                )
+                return res.get('return_code') == -1 or 'timeout' in texto
+
+            if _resultado_contem_timeout(resultado) and not resultado.get('sucesso', False):
+                intervalo_calculado = {
+                    'intervalo_minutos': 1,
+                    'intervalo_cron': '*/1 * * * *',
+                    'ajustado': True,
+                    'motivo': 'Timeout detectado — tentando novamente a cada minuto para preservar consistência dos dados',
+                    'tempo_execucao_minutos': tempo_execucao_minutos,
+                    'recomendacao': 'Manter intervalo de 1 minuto até o timeout ser resolvido',
+                }
+            elif resultado.get('sucesso', False):
+                intervalo_calculado = calcular_intervalo_ideal(
+                    tempo_execucao_segundos=tempo_execucao,
+                    diferenca_dias=0,
+                    total_registros_pendentes=0,
+                    intervalo_padrao_minutos=intervalo_inicial_minutos,
+                )
+            else:
+                intervalo_calculado = {
+                    'intervalo_minutos': intervalo_atual,
+                    'intervalo_cron': f"*/{intervalo_atual} * * * *",
+                    'ajustado': False,
+                    'motivo': 'Falha sem timeout — mantendo intervalo atual para recuperação mais rápida',
+                    'tempo_execucao_minutos': tempo_execucao_minutos,
+                    'recomendacao': f'Manter intervalo de {intervalo_atual} minutos',
+                }
 
             novo_intervalo = intervalo_calculado['intervalo_minutos']
 
