@@ -529,11 +529,13 @@ def sincronizar_incremental():
                 if col in chunk_df.columns:
                     chunk_df = chunk_df.drop(columns=[col])
             
-            # Converter timestamp para horário local de São Paulo (dia) e UTC (dia_utc)
-            def converter_para_dia_local_sp(dt):
-                """Converte timestamp original para horário local de São Paulo (America/Sao_Paulo), sem timezone."""
+            # Processar colunas de data: mesma abordagem do script pluviométrico.
+            # Uma única função converte para SP, extrai offset, formata dia_original,
+            # gera dia_utc (UTC naive) e dia (SP sem tz) — todos representando o mesmo instante.
+            def converter_para_utc_e_processar(dt):
+                """Retorna (dia_utc, dia_local_sp, dia_original_str, utc_offset_str)."""
                 if pd.isna(dt):
-                    return None
+                    return (None, None, None, None)
                 try:
                     if isinstance(dt, str):
                         dt_parsed = pd.to_datetime(dt)
@@ -543,118 +545,41 @@ def sincronizar_incremental():
                         dt_parsed = pd.Timestamp(dt)
                     else:
                         dt_parsed = pd.to_datetime(dt)
-                    
+
                     if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
                         dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
                     else:
                         dt_parsed = dt_parsed.tz_localize('UTC')
                         dt_sp = dt_parsed.tz_convert('America/Sao_Paulo')
-                    
-                    return dt_sp.tz_localize(None)
-                except Exception:
-                    return None
-            
-            # Processar coluna dia_utc: TIMESTAMPTZ do NIMBUS → TIMESTAMP (UTC) do BigQuery
-            def processar_dia_timestamp(dt):
-                """Processa TIMESTAMPTZ do PostgreSQL (NIMBUS) para TIMESTAMP do BigQuery (UTC)."""
-                if pd.isna(dt):
-                    return None
-                try:
-                    if isinstance(dt, str):
-                        dt_parsed = pd.to_datetime(dt)
-                    elif isinstance(dt, pd.Timestamp):
-                        dt_parsed = dt
-                    elif hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
-                        dt_parsed = pd.Timestamp(dt)
+
+                    offset = dt_sp.tz.utcoffset(dt_sp)
+                    if offset:
+                        total_seconds = offset.total_seconds()
+                        hours = int(total_seconds // 3600)
+                        minutes = int((abs(total_seconds) % 3600) // 60)
+                        utc_offset_str = f"{hours:+03d}{minutes:02d}"
                     else:
-                        dt_parsed = pd.to_datetime(dt)
-                    
-                    if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.tz is not None:
-                        dt_utc = dt_parsed.tz_convert('UTC')
-                        return dt_utc.tz_localize(None)
-                    elif isinstance(dt_parsed, pd.Timestamp):
-                        from datetime import timezone, timedelta
-                        tz_brasil = timezone(timedelta(hours=-3))
-                        dt_com_tz = dt_parsed.tz_localize(tz_brasil)
-                        dt_utc = dt_com_tz.tz_convert('UTC')
-                        return dt_utc.tz_localize(None)
-                    else:
-                        return dt_parsed
-                except Exception as e:
-                    print(f"      ⚠️  Erro ao processar timestamp: {e}")
-                    return None
-            
-            def formatar_dia_original(dt):
-                """Formata datetime no formato exato da NIMBUS: 2009-02-16 02:12:20.000 -0300"""
-                if pd.isna(dt):
-                    return None
-                try:
-                    if isinstance(dt, str):
-                        if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
-                            return dt
-                        dt_parsed = pd.to_datetime(dt)
-                    elif isinstance(dt, pd.Timestamp):
-                        dt_parsed = dt
-                    else:
-                        dt_parsed = pd.to_datetime(dt)
-                    
-                    offset_str = "-0300"
-                    if isinstance(dt_parsed, pd.Timestamp):
-                        if dt_parsed.tz is not None:
-                            offset = dt_parsed.tz.utcoffset(dt_parsed)
-                            if offset:
-                                total_seconds = offset.total_seconds()
-                                hours = int(total_seconds // 3600)
-                                minutes = int((abs(total_seconds) % 3600) // 60)
-                                offset_str = f"{hours:+03d}{minutes:02d}"
-                    
-                    timestamp_str = dt_parsed.strftime('%Y-%m-%d %H:%M:%S')
-                    if isinstance(dt_parsed, pd.Timestamp) and dt_parsed.microsecond:
-                        microsec_str = str(dt_parsed.microsecond)[:3].zfill(3)
+                        utc_offset_str = "-0300"
+
+                    timestamp_str = dt_sp.strftime('%Y-%m-%d %H:%M:%S')
+                    if dt_sp.microsecond:
+                        microsec_str = str(dt_sp.microsecond)[:3].zfill(3)
                         timestamp_str += f".{microsec_str}"
                     else:
                         timestamp_str += ".000"
-                    
-                    return f"{timestamp_str} {offset_str}"
-                except Exception:
-                    return None
-            
-            def extrair_utc_offset(dt):
-                """Extrai o offset UTC do timestamp original (ex: -0300, -0200)."""
-                if pd.isna(dt):
-                    return None
-                try:
-                    if isinstance(dt, str):
-                        if len(dt) > 10 and (dt[-5:].startswith('-') or dt[-5:].startswith('+')):
-                            return dt[-5:]
-                        dt_parsed = pd.to_datetime(dt)
-                    elif isinstance(dt, pd.Timestamp):
-                        dt_parsed = dt
-                    else:
-                        dt_parsed = pd.to_datetime(dt)
-                    
-                    offset_str = "-0300"
-                    if isinstance(dt_parsed, pd.Timestamp):
-                        if dt_parsed.tz is not None:
-                            offset = dt_parsed.tz.utcoffset(dt_parsed)
-                            if offset:
-                                total_seconds = offset.total_seconds()
-                                hours = int(total_seconds // 3600)
-                                minutes = int((abs(total_seconds) % 3600) // 60)
-                                offset_str = f"{hours:+03d}{minutes:02d}"
-                    
-                    return offset_str
-                except Exception:
-                    return None
-            
-            # Processar todas as colunas: dia_utc (TIMESTAMP), dia (DATETIME local SP), dia_original (STRING) e utc_offset (STRING)
-            chunk_df['dia'] = chunk_df['dia_utc'].apply(converter_para_dia_local_sp)
-            chunk_df['dia_original'] = chunk_df['dia_utc'].apply(formatar_dia_original)
-            chunk_df['utc_offset'] = chunk_df['dia_utc'].apply(extrair_utc_offset)
-            chunk_df['dia_utc'] = chunk_df['dia_utc'].apply(processar_dia_timestamp)
-            # Alinhar ao exportar/sync pluviométricos: DATETIME no BQ = datetime64 sem tz (microssegundos)
-            if 'dia' in chunk_df.columns:
-                chunk_df['dia'] = pd.to_datetime(chunk_df['dia']).dt.floor('us')
+                    dia_original_str = f"{timestamp_str} {utc_offset_str}"
+
+                    dt_utc = dt_parsed.tz_convert('UTC').tz_localize(None) if dt_parsed.tz is not None else dt_parsed
+                    dia_local_sp = dt_sp.tz_localize(None)
+                    return (dt_utc, dia_local_sp, dia_original_str, utc_offset_str)
+                except Exception as e:
+                    return (None, None, None, None)
+
+            resultados = chunk_df['dia_utc'].apply(converter_para_utc_e_processar)
+            chunk_df['dia_utc'] = resultados.apply(lambda x: x[0])
+            chunk_df['dia'] = resultados.apply(lambda x: x[1])
+            chunk_df['dia_original'] = resultados.apply(lambda x: x[2])
+            chunk_df['utc_offset'] = resultados.apply(lambda x: x[3])
 
             if 'estacao_id' in chunk_df.columns:
                 chunk_df['estacao_id'] = chunk_df['estacao_id'].astype('Int64')
