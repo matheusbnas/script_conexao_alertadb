@@ -341,9 +341,14 @@ SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
     elc.m10,
     elc.m15,
     elc.h01,
+    elc.h02,
+    elc.h03,
     elc.h04,
+    elc.h06,
+    elc.h12,
     elc.h24,
     elc.h96,
+    elc.mes,
     ee.nome AS "Estacao",
     el.estacao_id
 FROM public.estacoes_leitura AS el
@@ -372,9 +377,14 @@ SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
     elc.m10,
     elc.m15,
     elc.h01,
+    elc.h02,
+    elc.h03,
     elc.h04,
+    elc.h06,
+    elc.h12,
     elc.h24,
     elc.h96,
+    elc.mes,
     ee.nome AS "Estacao",
     el.estacao_id
 FROM public.estacoes_leitura AS el
@@ -422,9 +432,14 @@ def criar_tabela_pluviometricos():
             m10 NUMERIC,
             m15 NUMERIC,
             h01 NUMERIC,
+            h02 NUMERIC,
+            h03 NUMERIC,
             h04 NUMERIC,
+            h06 NUMERIC,
+            h12 NUMERIC,
             h24 NUMERIC,
             h96 NUMERIC,
+            mes NUMERIC,
             estacao VARCHAR(255),
             estacao_id INTEGER,
             PRIMARY KEY (dia, estacao_id)
@@ -495,7 +510,7 @@ def validar_amostra_dados(conn_origem, conn_destino, cur_origem, cur_destino, qu
     try:
         # Buscar alguns registros aleatórios do banco destino
         cur_destino.execute(f"""
-            SELECT dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id
+            SELECT dia, m05, m10, m15, h01, h02, h03, h04, h06, h12, h24, h96, mes, estacao, estacao_id
             FROM pluviometricos
             ORDER BY RANDOM()
             LIMIT {quantidade};
@@ -508,7 +523,7 @@ def validar_amostra_dados(conn_origem, conn_destino, cur_origem, cur_destino, qu
         divergencias = 0
         
         for registro_destino in registros_destino:
-            dia_dest, m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest, estacao_dest, est_id_dest = registro_destino
+            dia_dest, m05_dest, m10_dest, m15_dest, h01_dest, h02_dest, h03_dest, h04_dest, h06_dest, h12_dest, h24_dest, h96_dest, mes_dest, estacao_dest, est_id_dest = registro_destino
             
             # Buscar registro correspondente no banco origem
             query_origem = """
@@ -518,9 +533,14 @@ def validar_amostra_dados(conn_origem, conn_destino, cur_origem, cur_destino, qu
                 elc.m10,
                 elc.m15,
                 elc.h01,
+                elc.h02,
+                elc.h03,
                 elc.h04,
+                elc.h06,
+                elc.h12,
                 elc.h24,
                 elc.h96,
+                elc.mes,
                 ee.nome AS "Estacao",
                 el.estacao_id
             FROM public.estacoes_leitura AS el
@@ -536,13 +556,13 @@ def validar_amostra_dados(conn_origem, conn_destino, cur_origem, cur_destino, qu
             
             cur_origem.execute(query_origem, (dia_dest, est_id_dest))
             registro_origem = cur_origem.fetchone()
-            
+
             if registro_origem:
-                dia_orig, m05_orig, m10_orig, m15_orig, h01_orig, h04_orig, h24_orig, h96_orig, estacao_orig, est_id_orig = registro_origem
-                
+                dia_orig, m05_orig, m10_orig, m15_orig, h01_orig, h02_orig, h03_orig, h04_orig, h06_orig, h12_orig, h24_orig, h96_orig, mes_orig, estacao_orig, est_id_orig = registro_origem
+
                 # Comparar valores (ignorar diferenças de timezone no timestamp)
-                valores_origem = (m05_orig, m10_orig, m15_orig, h01_orig, h04_orig, h24_orig, h96_orig)
-                valores_destino = (m05_dest, m10_dest, m15_dest, h01_dest, h04_dest, h24_dest, h96_dest)
+                valores_origem = (m05_orig, m10_orig, m15_orig, h01_orig, h02_orig, h03_orig, h04_orig, h06_orig, h12_orig, h24_orig, h96_orig, mes_orig)
+                valores_destino = (m05_dest, m10_dest, m15_dest, h01_dest, h02_dest, h03_dest, h04_dest, h06_dest, h12_dest, h24_dest, h96_dest, mes_dest)
                 
                 if valores_origem != valores_destino:
                     divergencias += 1
@@ -805,17 +825,22 @@ def carregar_dados_completos(usar_data_inicial=None):
         # e o PostgreSQL vai converter para o timezone do servidor mantendo o valor local.
         insert_sql = '''
         INSERT INTO pluviometricos
-        (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
+        (dia, m05, m10, m15, h01, h02, h03, h04, h06, h12, h24, h96, mes, estacao, estacao_id)
         VALUES %s
-        ON CONFLICT (dia, estacao_id) 
+        ON CONFLICT (dia, estacao_id)
         DO UPDATE SET
             m05 = EXCLUDED.m05,
             m10 = EXCLUDED.m10,
             m15 = EXCLUDED.m15,
             h01 = EXCLUDED.h01,
+            h02 = EXCLUDED.h02,
+            h03 = EXCLUDED.h03,
             h04 = EXCLUDED.h04,
+            h06 = EXCLUDED.h06,
+            h12 = EXCLUDED.h12,
             h24 = EXCLUDED.h24,
             h96 = EXCLUDED.h96,
+            mes = EXCLUDED.mes,
             estacao = EXCLUDED.estacao;
         '''
         

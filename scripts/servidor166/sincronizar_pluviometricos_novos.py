@@ -226,9 +226,14 @@ SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
     elc.m10,
     elc.m15,
     elc.h01,
+    elc.h02,
+    elc.h03,
     elc.h04,
+    elc.h06,
+    elc.h12,
     elc.h24,
     elc.h96,
+    elc.mes,
     ee.nome AS "Estacao",
     el.estacao_id
 FROM public.estacoes_leitura AS el
@@ -618,17 +623,22 @@ def atualizar_dados_incrementais():
         # A coluna dia no servidor 166 é TIMESTAMPTZ NOT NULL, então preserva o timezone original
         insert_sql = '''
         INSERT INTO pluviometricos
-        (dia, m05, m10, m15, h01, h04, h24, h96, estacao, estacao_id)
+        (dia, m05, m10, m15, h01, h02, h03, h04, h06, h12, h24, h96, mes, estacao, estacao_id)
         VALUES %s
-        ON CONFLICT (dia, estacao_id) 
+        ON CONFLICT (dia, estacao_id)
         DO UPDATE SET
             m05 = EXCLUDED.m05,
             m10 = EXCLUDED.m10,
             m15 = EXCLUDED.m15,
             h01 = EXCLUDED.h01,
+            h02 = EXCLUDED.h02,
+            h03 = EXCLUDED.h03,
             h04 = EXCLUDED.h04,
+            h06 = EXCLUDED.h06,
+            h12 = EXCLUDED.h12,
             h24 = EXCLUDED.h24,
             h96 = EXCLUDED.h96,
+            mes = EXCLUDED.mes,
             estacao = EXCLUDED.estacao;
         '''
 
