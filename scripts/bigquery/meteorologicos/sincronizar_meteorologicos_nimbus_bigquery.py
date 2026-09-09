@@ -88,7 +88,7 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Carregar variáveis de ambiente
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 def obter_variavel(nome, obrigatoria=True, padrao=None):
@@ -430,7 +430,7 @@ def sincronizar_incremental():
                     print(f"   ⚠️  A sincronização irá FALHAR se tentar carregar dados!")
                     print(f"\n💡 SOLUÇÃO OBRIGATÓRIA:")
                     print(f"   1. Execute o script de exportação para recriar a tabela com particionamento por MÊS:")
-                    print(f"      python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py")
+                    print(f"      python scripts/bigquery/meteorologicos/exportar_meteorologicos_nimbus_bigquery.py")
                     print(f"   2. Isso vai recriar a tabela com particionamento por MÊS e recarregar todos os dados")
                     print(f"   3. Depois execute a sincronização novamente")
                     print(f"\n⚠️  Sincronização CANCELADA para evitar erro!")
@@ -456,7 +456,7 @@ def sincronizar_incremental():
             
             if ultima_sincronizacao == datetime(1997, 1, 1, tzinfo=timezone.utc):
                 print("⚠️  Tabela BigQuery está vazia ou não encontrada!")
-                print("   Execute PRIMEIRO: python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py")
+                print("   Execute PRIMEIRO: python scripts/bigquery/meteorologicos/exportar_meteorologicos_nimbus_bigquery.py")
                 print("   para fazer a carga inicial dos dados históricos.")
                 return False
             
@@ -757,7 +757,7 @@ def main():
             print("🌤️ SINCRONIZAÇÃO INCREMENTAL - DADOS METEOROLÓGICOS NIMBUS → BigQuery")
             print("=" * 80)
             print("\n⚠️  Para usar com cron, execute com --once:")
-            print("   python scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py --once")
+            print("   python scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py --once")
             print("\n🔄 Executando sincronização única...\n")
             sucesso = sincronizar_incremental()
             if sucesso:

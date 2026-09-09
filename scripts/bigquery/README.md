@@ -92,7 +92,7 @@ dia_original: STRING (formato original com offset: -0300/-0200)
 
 #### Opção 1: NIMBUS → BigQuery
 ```bash
-python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py
+python scripts/bigquery/pluviometricos/exportar_pluviometricos_nimbus_bigquery.py
 ```
 
 #### Opção 2: Servidor 166 → BigQuery
@@ -120,7 +120,7 @@ python scripts/prefect/flows.py --run-once
 #### Opção 2: NIMBUS → BigQuery (manual, fallback)
 ```bash
 # Testar manualmente
-python scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py --once
+python scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py --once
 ```
 
 #### Opção 3: Servidor 166 → BigQuery (manual, fallback)
@@ -132,7 +132,7 @@ python scripts/bigquery/sincronizar_pluviometricos_servidor166_bigquery.py --onc
 ### **🌤️ Dados Meteorológicos - Carga Inicial:**
 
 ```bash
-python scripts/bigquery/exportar_meteorologicos_nimbus_bigquery.py
+python scripts/bigquery/meteorologicos/exportar_meteorologicos_nimbus_bigquery.py
 ```
 
 ---

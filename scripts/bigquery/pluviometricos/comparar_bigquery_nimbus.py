@@ -12,7 +12,7 @@ from pathlib import Path
 import os
 
 # Carregar variáveis de ambiente
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 def obter_variavel(nome, obrigatoria=True, default=None):
@@ -251,7 +251,7 @@ def comparar_dados():
             print(f"   - {len(diferencas)} registros com valores diferentes")
         
         print("\n💡 RECOMENDAÇÃO:")
-        print("   Execute novamente: python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py")
+        print("   Execute novamente: python scripts/bigquery/pluviometricos/exportar_pluviometricos_nimbus_bigquery.py")
         print("   Isso irá recarregar todos os dados do NIMBUS para o BigQuery")
 
 if __name__ == "__main__":

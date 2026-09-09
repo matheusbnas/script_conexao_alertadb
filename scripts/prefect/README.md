@@ -161,8 +161,8 @@ scripts/prefect/
 
 Scripts de sincronização:
 
-- `scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py`
-- `scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py`
+- `scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py`
+- `scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py`
 
 ---
 

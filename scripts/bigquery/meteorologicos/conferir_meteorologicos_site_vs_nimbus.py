@@ -4,7 +4,7 @@
 Conferência: arquivos *_Met.txt (download Alerta Rio) vs. NIMBUS e/ou BigQuery (GCP).
 
 Uso:
-  python scripts/bigquery/conferir_meteorologicos_site_vs_nimbus.py --fonte gcp \\
+  python scripts/bigquery/meteorologicos/conferir_meteorologicos_site_vs_nimbus.py --fonte gcp \\
     --estacao-id 11 iraja_202602_Met.txt iraja_202603_Met.txt
 
 Requer .env:
@@ -29,7 +29,7 @@ from google.oauth2 import service_account
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 
-project_root = Path(__file__).resolve().parent.parent.parent
+project_root = Path(__file__).resolve().parent.parent.parent.parent
 load_dotenv(dotenv_path=project_root / ".env")
 
 

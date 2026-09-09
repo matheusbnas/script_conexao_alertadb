@@ -29,8 +29,8 @@ class Tabela(str, Enum):
 # Scripts de sincronização (caminhos relativos a PROJECT_ROOT)
 # ---------------------------------------------------------------------------
 
-SCRIPT_SYNC_PLUVIO = 'scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py'
-SCRIPT_SYNC_METEO  = 'scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py'
+SCRIPT_SYNC_PLUVIO = 'scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py'
+SCRIPT_SYNC_METEO  = 'scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py'
 
 # ---------------------------------------------------------------------------
 # Queries NIMBUS para detecção de lacunas

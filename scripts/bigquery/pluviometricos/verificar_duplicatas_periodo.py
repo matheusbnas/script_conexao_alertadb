@@ -11,7 +11,7 @@ from pathlib import Path
 import os
 
 # Carregar variáveis de ambiente
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 def obter_variavel(nome, obrigatoria=True):
@@ -170,7 +170,7 @@ def main():
         print("   O DISTINCT ON está pegando o registro com maior ID (mais recente)")
         print("   Mas pode haver registros com IDs diferentes mas valores diferentes")
         print("\n💡 SOLUÇÃO:")
-        print("   Execute novamente: python scripts/bigquery/exportar_pluviometricos_nimbus_bigquery.py")
+        print("   Execute novamente: python scripts/bigquery/pluviometricos/exportar_pluviometricos_nimbus_bigquery.py")
         print("   Isso garantirá que os dados mais recentes sejam exportados")
     else:
         print("✅ NÃO HÁ DUPLICATAS")

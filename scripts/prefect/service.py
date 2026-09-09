@@ -297,12 +297,12 @@ def executar_workflow(workflow_tipo: str) -> Dict:
         if not _prefect_api_disponivel():
             print("   ⚠️  API do Prefect inacessível (verificação TCP). Aplicando fallback imediato...")
             if workflow_tipo == 'pluviometricos':
-                return _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
+                return _executar_script_direto('scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py')
             if workflow_tipo == 'meteorologicos':
-                return _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                return _executar_script_direto('scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py')
             if workflow_tipo == 'combinado':
-                r1 = _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
-                r2 = _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                r1 = _executar_script_direto('scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py')
+                r2 = _executar_script_direto('scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py')
                 return {
                     'sucesso': r1.get('sucesso', False) and r2.get('sucesso', False),
                     'tempo_segundos': r1.get('tempo_segundos', 0) + r2.get('tempo_segundos', 0),
@@ -365,12 +365,12 @@ def executar_workflow(workflow_tipo: str) -> Dict:
             if _erro_api_prefect(stderr_text):
                 print("   ⚠️  API do Prefect indisponível. Aplicando fallback sem orquestrador...")
                 if workflow_tipo == 'pluviometricos':
-                    return _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
+                    return _executar_script_direto('scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py')
                 if workflow_tipo == 'meteorologicos':
-                    return _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                    return _executar_script_direto('scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py')
                 if workflow_tipo == 'combinado':
-                    r1 = _executar_script_direto('scripts/bigquery/sincronizar_pluviometricos_nimbus_bigquery.py')
-                    r2 = _executar_script_direto('scripts/bigquery/sincronizar_meteorologicos_nimbus_bigquery.py')
+                    r1 = _executar_script_direto('scripts/bigquery/pluviometricos/sincronizar_pluviometricos_nimbus_bigquery.py')
+                    r2 = _executar_script_direto('scripts/bigquery/meteorologicos/sincronizar_meteorologicos_nimbus_bigquery.py')
                     return {
                         'sucesso': r1.get('sucesso', False) and r2.get('sucesso', False),
                         'tempo_segundos': r1.get('tempo_segundos', 0) + r2.get('tempo_segundos', 0),

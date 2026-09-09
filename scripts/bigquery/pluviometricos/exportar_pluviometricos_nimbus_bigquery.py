@@ -81,7 +81,7 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Carregar variáveis de ambiente
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 def obter_variavel(nome, obrigatoria=True, padrao=None):
