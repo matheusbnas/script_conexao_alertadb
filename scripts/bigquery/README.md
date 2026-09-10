@@ -150,7 +150,7 @@ DB_ORIGEM_USER=planejamento_cor
 DB_ORIGEM_PASSWORD=sua_senha
 
 # BigQuery (NIMBUS → BigQuery)
-BIGQUERY_PROJECT_ID=alertadb-cor
+BIGQUERY_PROJECT_ID=pivotal-mile-258015
 BIGQUERY_DATASET_ID_NIMBUS=alertadb_cor_raw
 BIGQUERY_TABLE_ID=pluviometricos
 ```
@@ -164,7 +164,7 @@ DB_ORIGEM_USER=planejamento_cor
 DB_ORIGEM_PASSWORD=sua_senha
 
 # BigQuery (NIMBUS → BigQuery)
-BIGQUERY_PROJECT_ID=alertadb-cor
+BIGQUERY_PROJECT_ID=pivotal-mile-258015
 BIGQUERY_DATASET_ID_NIMBUS=alertadb_cor_raw
 BIGQUERY_TABLE_ID_METEOROLOGICOS=meteorologicos
 ```
@@ -178,7 +178,7 @@ DB_DESTINO_USER=postgres
 DB_DESTINO_PASSWORD=sua_senha
 
 # BigQuery (Servidor 166 → BigQuery)
-BIGQUERY_PROJECT_ID=alertadb-cor
+BIGQUERY_PROJECT_ID=pivotal-mile-258015
 BIGQUERY_DATASET_ID_SERVIDOR166=alertadb_166_raw
 BIGQUERY_TABLE_ID=pluviometricos
 ```

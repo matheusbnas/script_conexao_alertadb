@@ -184,17 +184,17 @@ def testar_conexao_nimbus():
 
 def query_todos_dados_pluviometricos():
     """Retorna query para buscar TODOS os dados pluviométricos disponíveis no banco NIMBUS.
-    
+
     Usa DISTINCT ON para garantir apenas um registro por (dia_utc, estacao_id),
     mantendo o registro com o maior ID (mais recente), que é exatamente como
     está no banco alertadb.
-    
+
     IMPORTANTE: A ordem do ORDER BY deve corresponder à ordem do DISTINCT ON,
     e depois ordenar por id DESC para pegar o registro mais recente.
-    
+
     A coluna horaLeitura é TIMESTAMPTZ NOT NULL no NIMBUS, preservando o timezone original.
     O pandas/SQLAlchemy preserva automaticamente o timezone ao ler TIMESTAMPTZ.
-    
+
     Esta é a MESMA query usada em carregar_pluviometricos_historicos.py e
     sincronizar_pluviometricos_novos.py para garantir consistência.
     """
@@ -220,6 +220,39 @@ JOIN public.estacoes_leiturachuva AS elc
     ON elc.leitura_id = el.id
 JOIN public.estacoes_estacao AS ee
     ON ee.id = el.estacao_id
+ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
+"""
+
+def query_dados_pluviometricos_por_ano(ano):
+    """Retorna query filtrando apenas dados de um ano específico.
+
+    Processa um ano por vez para evitar problemas de memória ao exportar
+    dados históricos desde 1997.
+    """
+    return f"""
+SELECT DISTINCT ON (el."horaLeitura", el.estacao_id)
+    el."horaLeitura" AS "Dia",
+    elc.m05,
+    elc.m10,
+    elc.m15,
+    elc.h01,
+    elc.h02,
+    elc.h03,
+    elc.h04,
+    elc.h06,
+    elc.h12,
+    elc.h24,
+    elc.h96,
+    elc.mes,
+    ee.nome AS "Estacao",
+    el.estacao_id
+FROM public.estacoes_leitura AS el
+JOIN public.estacoes_leiturachuva AS elc
+    ON elc.leitura_id = el.id
+JOIN public.estacoes_estacao AS ee
+    ON ee.id = el.estacao_id
+WHERE el."horaLeitura" >= '{ano}-01-01 00:00:00+00'
+  AND el."horaLeitura" <  '{ano + 1}-01-01 00:00:00+00'
 ORDER BY el."horaLeitura" ASC, el.estacao_id ASC, el.id DESC;
 """
 
@@ -440,22 +473,23 @@ def criar_tabela_com_schema(client, dataset_id, table_id, schema):
         traceback.print_exc()
         return False
 
-def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, schema, query, descricao):
+def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, schema, query, descricao,
+                                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE):
     """Processa e carrega uma tabela específica no BigQuery."""
     print(f"📦 Buscando dados {descricao} do NIMBUS...")
     print(f"   💡 Isso pode levar alguns minutos dependendo do volume de dados...")
-    
+
     inicio_query = datetime.now()
-    chunksize = 5000  # Reduzido de 10000 para 5000 para evitar problemas de memória
+    chunksize = 5000
     total_registros = 0
     chunk_numero = 1
-    
+
     table_ref = client_bq.dataset(dataset_id).table(table_id)
-    
+
     # Configurar job de carga
     job_config = bigquery.LoadJobConfig(
         schema=schema,
-        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        write_disposition=write_disposition,
         source_format=bigquery.SourceFormat.PARQUET,
     )
     
@@ -795,28 +829,42 @@ def exportar_para_bigquery():
             schema_pluviometricos
         )
         
-        # Processar tabela pluviometricos
+        # Processar tabela pluviometricos — ano a ano para evitar OOM
         print("\n" + "=" * 80)
-        print("📊 PROCESSANDO TABELA: pluviometricos")
+        print("📊 PROCESSANDO TABELA: pluviometricos (ano a ano)")
         print("=" * 80)
-        
-        query_pluviometricos = query_todos_dados_pluviometricos()
-        total_pluviometricos = processar_e_carregar_tabela(
-            engine_nimbus=engine_nimbus,
-            client_bq=client_bq,
-            dataset_id=BIGQUERY_CONFIG['dataset_id'],
-            table_id='pluviometricos',
-            schema=schema_pluviometricos,
-            query=query_pluviometricos,
-            descricao="pluviométricos"
-        )
-        
+
+        ano_inicio = 1997
+        ano_fim = datetime.now().year
+        total_pluviometricos = 0
+
+        for ano in range(ano_inicio, ano_fim + 1):
+            print(f"\n📅 Processando ano {ano}...")
+            write_disp = (
+                bigquery.WriteDisposition.WRITE_TRUNCATE
+                if ano == ano_inicio
+                else bigquery.WriteDisposition.WRITE_APPEND
+            )
+            query_ano = query_dados_pluviometricos_por_ano(ano)
+            registros_ano = processar_e_carregar_tabela(
+                engine_nimbus=engine_nimbus,
+                client_bq=client_bq,
+                dataset_id=BIGQUERY_CONFIG['dataset_id'],
+                table_id='pluviometricos',
+                schema=schema_pluviometricos,
+                query=query_ano,
+                descricao=f"pluviométricos {ano}",
+                write_disposition=write_disp,
+            )
+            total_pluviometricos += registros_ano
+            print(f"   ✅ Ano {ano}: {registros_ano:,} registros | Total acumulado: {total_pluviometricos:,}")
+
         # Resumo final
         print("\n" + "=" * 80)
         print("✅ EXPORTAÇÃO CONCLUÍDA")
         print("=" * 80)
         print(f"📊 pluviometricos: {total_pluviometricos:,} registros")
-        
+
         return total_pluviometricos
 
     except Exception as e:

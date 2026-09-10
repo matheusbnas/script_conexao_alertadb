@@ -163,7 +163,7 @@ BIGQUERY_CREDENTIALS_PATH=/caminho/credentials.json  # Opcional
 #### Via Console GCP (Mais Fácil)
 1. Acesse: https://console.cloud.google.com
 2. No topo da página, você verá o **ID do projeto** ao lado do nome do projeto
-3. Exemplo: Se o nome é "Meu Projeto", o ID pode ser `1029418267270`
+3. Exemplo: Se o nome é "Meu Projeto", o ID pode ser `meu-projeto-123456`
 
 #### Via Linha de Comando
 ```bash
@@ -528,7 +528,7 @@ Para conceder acesso de **somente leitura** (consulta) no BigQuery para clientes
    bq add-iam-member \
      --member="serviceAccount:lncc-cefet@rj-cor.iam.gserviceaccount.com" \
      --role="roles/bigquery.dataViewer" \
-     "alertadb-cor:alertadb_cor_raw"
+     "pivotal-mile-258015:alertadb_cor_raw"
    ```
 ---
 
@@ -594,7 +594,7 @@ PARTITION BY DATE(dia_utc);
 > **Nota:** o campo é `dia_utc` (UTC). Para exibir no horário de Brasília:
 > ```sql
 > SELECT DATETIME(dia_utc, "America/Sao_Paulo") AS dia_brasil
-> FROM `alertadb-cor.alertadb_cor_raw.pluviometricos`
+> FROM `pivotal-mile-258015.alertadb_cor_raw.pluviometricos`
 > ```
 
 ### Por que usamos `dia_utc` (TIMESTAMP) + `dia` (DATETIME)?

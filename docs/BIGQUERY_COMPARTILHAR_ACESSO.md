@@ -21,7 +21,7 @@ Client ID: 108254407799378387529
 **⚠️ IMPORTANTE:** 
 - A service account do cliente (`lncc-cefet@rj-cor.iam.gserviceaccount.com`) já existe no projeto `rj-cor` do cliente
 - **VOCÊ NÃO PRECISA TER ACESSO** à service account do cliente
-- Você só precisa **conceder permissões** no seu projeto `alertadb-cor` para essa service account
+- Você só precisa **conceder permissões** no seu projeto `pivotal-mile-258015` para essa service account
 - O **CLIENTE** é quem precisa ter acesso à service account dele para obter as credenciais JSON
 
 ---
@@ -36,7 +36,7 @@ Client ID: 108254407799378387529
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ 2. VOCÊ concede acesso no SEU projeto (alertadb-cor)      │
+│ 2. VOCÊ concede acesso no SEU projeto (pivotal-mile-258015)      │
 │    Dataset: alertadb_cor_raw                               │
 │    Role: BigQuery Data Viewer (somente leitura)           │
 │    ✅ Você só precisa saber o EMAIL da service account     │
@@ -49,12 +49,12 @@ Client ID: 108254407799378387529
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ 4. CLIENTE usa credenciais para consultar dados            │
-│    no projeto alertadb-cor                                 │
+│    no projeto pivotal-mile-258015                                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **📌 Resumo:**
-- **Você:** Concede permissões no projeto `alertadb-cor` usando apenas o EMAIL da service account
+- **Você:** Concede permissões no projeto `pivotal-mile-258015` usando apenas o EMAIL da service account
 - **Cliente:** Obtém credenciais JSON da service account dele e usa para consultar dados
 
 ---
@@ -64,7 +64,7 @@ Client ID: 108254407799378387529
 ### Passo 1: Acessar o BigQuery Console
 
 1. Acesse: https://console.cloud.google.com/bigquery
-2. **IMPORTANTE:** Selecione o projeto **`alertadb-cor`** (projeto onde estão os dados, NÃO o projeto do cliente)
+2. **IMPORTANTE:** Selecione o projeto **`pivotal-mile-258015`** (projeto onde estão os dados, NÃO o projeto do cliente)
 3. Certifique-se de estar no projeto correto verificando o seletor de projeto no topo da página
 
 ### Passo 2: Compartilhar Dataset
@@ -124,7 +124,7 @@ A service account `lncc-cefet@rj-cor.iam.gserviceaccount.com` **já existe** no 
 
 1. **Ter acesso ao projeto `rj-cor`** no GCP Console
 2. **Obter as credenciais (JSON)** da service account
-3. **Usar essas credenciais** para consultar dados no projeto `alertadb-cor`
+3. **Usar essas credenciais** para consultar dados no projeto `pivotal-mile-258015`
 
 ### Passo 1: Cliente Obtém Credenciais da Service Account
 
@@ -142,11 +142,11 @@ A service account `lncc-cefet@rj-cor.iam.gserviceaccount.com` **já existe** no 
 **💡 Você só precisa informar ao cliente:**
 - O email da service account: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
 - Que ele precisa obter as credenciais JSON dessa service account
-- Que ele vai usar essas credenciais para consultar dados no projeto `alertadb-cor`
+- Que ele vai usar essas credenciais para consultar dados no projeto `pivotal-mile-258015`
 
 ### Passo 2: Cliente Usa as Credenciais para Consultar Dados
 
-O cliente usa o arquivo JSON baixado para autenticar e consultar dados no projeto `alertadb-cor`:
+O cliente usa o arquivo JSON baixado para autenticar e consultar dados no projeto `pivotal-mile-258015`:
 
 #### Via Python
 
@@ -163,10 +163,10 @@ credentials = service_account.Credentials.from_service_account_file(
 )
 
 # Criar cliente BigQuery
-# IMPORTANTE: project='alertadb-cor' (projeto onde estão os dados)
+# IMPORTANTE: project='pivotal-mile-258015' (projeto onde estão os dados)
 client = bigquery.Client(
     credentials=credentials,
-    project='alertadb-cor'  # Projeto onde VOCÊ compartilhou os dados
+    project='pivotal-mile-258015'  # Projeto onde VOCÊ compartilhou os dados
 )
 
 # Consultar dados
@@ -176,7 +176,7 @@ SELECT
     estacao,
     estacao_id,
     h24
-FROM `alertadb-cor.alertadb_cor_raw.pluviometricos`
+FROM `pivotal-mile-258015.alertadb_cor_raw.pluviometricos`
 WHERE dia >= '2009-02-15 22:00:00.000 -0300'
   AND dia <= '2009-02-18 01:00:00.000 -0300'
   AND estacao_id = 14
@@ -198,11 +198,11 @@ gcloud auth activate-service-account \
   --key-file=credentials-rj-cor.json
 
 # 2. Definir projeto (onde estão os dados)
-gcloud config set project alertadb-cor
+gcloud config set project pivotal-mile-258015
 
 # 3. Consultar dados
 bq query --use_legacy_sql=false \
-  "SELECT COUNT(*) as total FROM \`alertadb-cor.alertadb_cor_raw.pluviometricos\`"
+  "SELECT COUNT(*) as total FROM \`pivotal-mile-258015.alertadb_cor_raw.pluviometricos\`"
 ```
 
 ### Estrutura do Arquivo JSON de Credenciais
@@ -227,7 +227,7 @@ O arquivo JSON que o cliente baixa tem esta estrutura:
 **⚠️ IMPORTANTE:**
 - `project_id`: `rj-cor` (projeto do cliente onde a service account foi criada)
 - `client_email`: `lncc-cefet@rj-cor.iam.gserviceaccount.com` (service account do cliente)
-- Mas o cliente consulta dados no projeto: `alertadb-cor` (projeto onde VOCÊ compartilhou os dados)
+- Mas o cliente consulta dados no projeto: `pivotal-mile-258015` (projeto onde VOCÊ compartilhou os dados)
 
 ---
 
@@ -245,7 +245,7 @@ O arquivo JSON que o cliente baixa tem esta estrutura:
 
 ```bash
 # Definir variáveis
-PROJECT_ID="alertadb-cor"
+PROJECT_ID="pivotal-mile-258015"
 DATASET_ID="alertadb_cor_raw"  # Ajuste conforme seu dataset
 SERVICE_ACCOUNT="lncc-cefet@rj-cor.iam.gserviceaccount.com"
 ROLE="roles/bigquery.dataViewer"  # Para somente leitura
@@ -263,7 +263,7 @@ Se quiser dar acesso apenas a uma tabela específica:
 
 ```bash
 # Definir variáveis
-PROJECT_ID="alertadb-cor"
+PROJECT_ID="pivotal-mile-258015"
 DATASET_ID="alertadb_cor_raw"
 TABLE_ID="pluviometricos"
 SERVICE_ACCOUNT="lncc-cefet@rj-cor.iam.gserviceaccount.com"
@@ -285,7 +285,7 @@ bq add-iam-member \
 ### Via Console GCP
 
 1. Acesse: https://console.cloud.google.com/iam-admin/iam
-2. Selecione o projeto: `alertadb-cor`
+2. Selecione o projeto: `pivotal-mile-258015`
 3. Clique em **"Grant Access"** ou **"Conceder acesso"**
 4. Cole o email: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
 5. Selecione a role: **BigQuery Data Viewer**
@@ -295,7 +295,7 @@ bq add-iam-member \
 
 ```bash
 # Conceder acesso ao projeto inteiro
-gcloud projects add-iam-policy-binding alertadb-cor \
+gcloud projects add-iam-policy-binding pivotal-mile-258015 \
   --member="serviceAccount:lncc-cefet@rj-cor.iam.gserviceaccount.com" \
   --role="roles/bigquery.dataViewer"
 ```
@@ -329,11 +329,11 @@ gcloud projects add-iam-policy-binding alertadb-cor \
 ```bash
 # Ver permissões do dataset
 bq show --format=prettyjson \
-  alertadb-cor:alertadb_cor_raw \
+  pivotal-mile-258015:alertadb_cor_raw \
   | grep -A 20 "access"
 
 # Ver permissões do projeto
-gcloud projects get-iam-policy alertadb-cor \
+gcloud projects get-iam-policy pivotal-mile-258015 \
   --flatten="bindings[].members" \
   --filter="bindings.members:lncc-cefet@rj-cor.iam.gserviceaccount.com"
 ```
@@ -399,7 +399,7 @@ O cliente pode testar o acesso usando a service account dele. Veja a seção **"
 ### Para VOCÊ Conceder Acesso (Proprietário dos Dados)
 
 **Contexto:**
-- Você tem os dados no projeto: `alertadb-cor`
+- Você tem os dados no projeto: `pivotal-mile-258015`
 - Dataset: `alertadb_cor_raw`
 - Cliente tem service account: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
 - **⚠️ Você NÃO precisa ter acesso à service account do cliente**
@@ -410,7 +410,7 @@ O cliente pode testar o acesso usando a service account dele. Veja a seção **"
 ```bash
 # Via Console GCP (Recomendado)
 1. Acesse: https://console.cloud.google.com/bigquery
-2. Selecione projeto: alertadb-cor (SEU projeto)
+2. Selecione projeto: pivotal-mile-258015 (SEU projeto)
 3. Dataset: alertadb_cor_raw → Share dataset
 4. Adicionar: lncc-cefet@rj-cor.iam.gserviceaccount.com (apenas o email)
 5. Role: BigQuery Data Viewer
@@ -420,7 +420,7 @@ O cliente pode testar o acesso usando a service account dele. Veja a seção **"
 bq add-iam-member \
   --member="serviceAccount:lncc-cefet@rj-cor.iam.gserviceaccount.com" \
   --role="roles/bigquery.dataViewer" \
-  "alertadb-cor:alertadb_cor_raw"
+  "pivotal-mile-258015:alertadb_cor_raw"
 ```
 
 **✅ Pronto!** Após isso, o cliente pode usar a service account dele para consultar os dados.
@@ -430,14 +430,14 @@ bq add-iam-member \
 **Contexto:**
 - Cliente tem service account no projeto: `rj-cor` (projeto do cliente)
 - Service account: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
-- Cliente consulta dados no projeto: `alertadb-cor` (onde você compartilhou)
+- Cliente consulta dados no projeto: `pivotal-mile-258015` (onde você compartilhou)
 
 **Passos:**
 
 1. **Cliente obtém credenciais JSON** da service account dele (no projeto `rj-cor`)
    - Cliente precisa ter acesso ao projeto `rj-cor` dele
    - Cliente baixa o arquivo JSON da service account
-2. **Cliente usa credenciais** para consultar dados no projeto `alertadb-cor`
+2. **Cliente usa credenciais** para consultar dados no projeto `pivotal-mile-258015`
 
 ```python
 from google.cloud import bigquery
@@ -451,13 +451,13 @@ credentials = service_account.Credentials.from_service_account_file(
 # Criar cliente apontando para projeto onde VOCÊ compartilhou os dados
 client = bigquery.Client(
     credentials=credentials,
-    project='alertadb-cor'  # Projeto onde estão os dados
+    project='pivotal-mile-258015'  # Projeto onde estão os dados
 )
 
 # Consultar dados
 query = """
 SELECT dia, estacao, estacao_id, h24
-FROM `alertadb-cor.alertadb_cor_raw.pluviometricos`
+FROM `pivotal-mile-258015.alertadb_cor_raw.pluviometricos`
 WHERE estacao_id = 14
 ORDER BY dia DESC
 LIMIT 10
@@ -469,11 +469,11 @@ for row in results:
 
 **⚠️ PONTOS IMPORTANTES:**
 - Service account do cliente está no projeto `rj-cor` (projeto do cliente)
-- Dados estão no projeto `alertadb-cor` (seu projeto)
+- Dados estão no projeto `pivotal-mile-258015` (seu projeto)
 - **Você NÃO precisa ter acesso à service account do cliente**
-- **Você só precisa conceder permissões** no projeto `alertadb-cor` usando o EMAIL da service account
-- Cliente usa credenciais do projeto `rj-cor` para acessar dados do projeto `alertadb-cor`
-- Isso funciona porque VOCÊ concedeu acesso no projeto `alertadb-cor`
+- **Você só precisa conceder permissões** no projeto `pivotal-mile-258015` usando o EMAIL da service account
+- Cliente usa credenciais do projeto `rj-cor` para acessar dados do projeto `pivotal-mile-258015`
+- Isso funciona porque VOCÊ concedeu acesso no projeto `pivotal-mile-258015`
 
 ---
 
@@ -492,18 +492,18 @@ for row in results:
 
 **NÃO.** Você não precisa ter acesso à service account do cliente. Você só precisa:
 - Saber o **EMAIL** da service account: `lncc-cefet@rj-cor.iam.gserviceaccount.com`
-- Conceder permissões no seu projeto `alertadb-cor` usando esse email
+- Conceder permissões no seu projeto `pivotal-mile-258015` usando esse email
 
-### O cliente precisa criar uma service account no projeto alertadb-cor?
+### O cliente precisa criar uma service account no projeto pivotal-mile-258015?
 
-**NÃO.** O cliente usa a service account dele (`lncc-cefet@rj-cor.iam.gserviceaccount.com`) que está no projeto `rj-cor`. Você apenas concede acesso a essa service account para visualizar dados no projeto `alertadb-cor`.
+**NÃO.** O cliente usa a service account dele (`lncc-cefet@rj-cor.iam.gserviceaccount.com`) que está no projeto `rj-cor`. Você apenas concede acesso a essa service account para visualizar dados no projeto `pivotal-mile-258015`.
 
-### Por que o email da service account é @rj-cor.iam.gserviceaccount.com mas os dados estão em alertadb-cor?
+### Por que o email da service account é @rj-cor.iam.gserviceaccount.com mas os dados estão em pivotal-mile-258015?
 
 Porque:
 - A **service account** foi criada no projeto `rj-cor` (do cliente)
-- Os **dados** estão no projeto `alertadb-cor` (seu projeto)
-- Você **compartilha** os dados do projeto `alertadb-cor` com a service account do projeto `rj-cor`
+- Os **dados** estão no projeto `pivotal-mile-258015` (seu projeto)
+- Você **compartilha** os dados do projeto `pivotal-mile-258015` com a service account do projeto `rj-cor`
 
 Isso é normal e funciona perfeitamente no GCP.
 

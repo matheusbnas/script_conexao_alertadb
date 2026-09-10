@@ -7,7 +7,7 @@ services:
     command: ["prefect-server"]
 
     ports:
-      - "4200:4200"
+      - "4201:4200"
 
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4200/api/health', timeout=5); print('ok')"]
@@ -33,7 +33,7 @@ services:
       # Prefect
       - PREFECT_WORKFLOW=${PREFECT_WORKFLOW:-combinado}
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4201/api}
       - PREFECT_STATE_FILE=/app/scripts/prefect/state/combinado.json
       - PREFECT_SYNC_TIMEOUT_SECONDS=${PREFECT_SYNC_TIMEOUT_SECONDS:-5400}
       - PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIOMETRICOS=${PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIO:-5400}
@@ -92,7 +92,7 @@ services:
       # Prefect
       - PREFECT_WORKFLOW=pluviometricos
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4201/api}
       - PREFECT_STATE_FILE=/app/scripts/prefect/state/pluviometricos.json
       - PREFECT_SYNC_TIMEOUT_SECONDS=${PREFECT_SYNC_TIMEOUT_SECONDS:-5400}
       - PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIOMETRICOS=${PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIO:-5400}
@@ -133,7 +133,7 @@ services:
       # Prefect
       - PREFECT_WORKFLOW=meteorologicos
       - PREFECT_INTERVALO=${PREFECT_INTERVALO:-5}
-      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
+      - PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4201/api}
       - PREFECT_STATE_FILE=/app/scripts/prefect/state/meteorologicos.json
       - PREFECT_SYNC_TIMEOUT_SECONDS=${PREFECT_SYNC_TIMEOUT_SECONDS:-5400}
       - PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIOMETRICOS=${PREFECT_SYNC_TIMEOUT_SECONDS_PLUVIO:-5400}
