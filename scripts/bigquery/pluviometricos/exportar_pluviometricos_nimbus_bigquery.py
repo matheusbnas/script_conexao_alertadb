@@ -486,13 +486,6 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
 
     table_ref = client_bq.dataset(dataset_id).table(table_id)
 
-    # Configurar job de carga
-    job_config = bigquery.LoadJobConfig(
-        schema=schema,
-        write_disposition=write_disposition,
-        source_format=bigquery.SourceFormat.PARQUET,
-    )
-    
     print(f"\n📦 Processando e carregando dados {descricao} no BigQuery...")
     print(f"   💡 Usando formato Parquet para melhor performance")
     print(f"   💡 Query usa DISTINCT ON (mesma lógica dos scripts servidor166)")
@@ -716,7 +709,7 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         print(f"   📤 Carregando arquivo {i}/{len(parquet_files)}: {parquet_file.name}...")
         file_job_config = bigquery.LoadJobConfig(
             schema=schema,
-            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE if i == 1 else bigquery.WriteDisposition.WRITE_APPEND,
+            write_disposition=write_disposition if i == 1 else bigquery.WriteDisposition.WRITE_APPEND,
             source_format=bigquery.SourceFormat.PARQUET,
         )
         
