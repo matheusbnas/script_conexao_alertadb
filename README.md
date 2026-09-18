@@ -66,6 +66,17 @@ Para parar só o worker meteorológico (exemplo) mantendo os demais containers:
 
 Detalhes, tabela de serviços e boas práticas: [`scripts/prefect/README.md`](scripts/prefect/README.md).
 
+### Operação e segurança do Docker
+
+O daemon Docker precisa estar ativo antes dos comandos acima:
+
+```bash
+systemctl is-active docker
+docker info
+```
+
+Para parar apenas esta aplicação, use `docker compose stop` ou `docker compose down`. O comando `sudo systemctl stop docker` para o Docker inteiro e afeta todos os containers da máquina. Consulte o [guia completo do Prefect](docs/PREFECT_GUIA_COMPLETO.md#operação-do-docker-em-produção) para os comandos de iniciar, parar, reiniciar e configurar o daemon, além das recomendações de exposição de portas em produção.
+
 ---
 
 ## 📁 Estrutura

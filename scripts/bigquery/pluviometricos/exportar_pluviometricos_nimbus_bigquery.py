@@ -73,6 +73,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from pathlib import Path
 import tempfile
+import time
 
 # Configurar encoding UTF-8 para Windows (resolve problema com emojis)
 if sys.platform == 'win32':
@@ -278,6 +279,41 @@ def obter_schema_pluviometricos():
         bigquery.SchemaField("estacao", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("estacao_id", "INTEGER", mode="REQUIRED"),
     ]
+
+def carregar_parquet_com_retry(client_bq, source_file, table_ref, job_config, indice, total_arquivos):
+    """Cria um job de carga com espera e retry para quota do BigQuery."""
+    intervalo = float(os.getenv('BIGQUERY_LOAD_JOB_DELAY_SECONDS', '1.5'))
+    max_tentativas = int(os.getenv('BIGQUERY_LOAD_JOB_MAX_RETRIES', '8'))
+
+    for tentativa in range(1, max_tentativas + 1):
+        try:
+            source_file.seek(0)
+            job = client_bq.load_table_from_file(
+                source_file,
+                table_ref,
+                job_config=job_config
+            )
+            job.result()
+            if intervalo > 0:
+                time.sleep(intervalo)
+            return
+        except Exception as erro:
+            mensagem = str(erro).lower()
+            erro_de_quota = (
+                'rate limit' in mensagem
+                or 'too many api requests' in mensagem
+                or 'quota' in mensagem
+            )
+            if not erro_de_quota or tentativa == max_tentativas:
+                raise
+
+            espera = min(intervalo * (2 ** tentativa), 120)
+            print(
+                f"      ⚠️  Limite de requisições no arquivo "
+                f"{indice}/{total_arquivos}; nova tentativa em {espera:.1f}s "
+                f"({tentativa}/{max_tentativas})"
+            )
+            time.sleep(espera)
 
 def criar_dataset_se_nao_existir(client, dataset_id):
     """Cria dataset no BigQuery se não existir.
@@ -714,12 +750,14 @@ def processar_e_carregar_tabela(engine_nimbus, client_bq, dataset_id, table_id, 
         )
         
         with open(parquet_file, 'rb') as source_file:
-            job = client_bq.load_table_from_file(
+            carregar_parquet_com_retry(
+                client_bq,
                 source_file,
                 table_ref,
-                job_config=file_job_config
+                file_job_config,
+                i,
+                len(parquet_files),
             )
-            job.result()
             print(f"      ✅ Arquivo {i}/{len(parquet_files)} carregado com sucesso")
     
     tempo_carga = (datetime.now() - inicio_carga).total_seconds()

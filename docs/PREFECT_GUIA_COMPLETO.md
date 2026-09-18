@@ -111,6 +111,61 @@ Abra no navegador: `http://localhost:4200`
 
 Se estiver em servidor remoto: `http://IP_DO_SERVIDOR:4200`
 
+### Operação do Docker em produção
+
+O daemon do Docker precisa estar ativo antes de usar `docker compose`:
+
+```bash
+# Verificar o estado
+systemctl is-active docker
+
+# Iniciar, parar ou reiniciar o daemon
+sudo systemctl start docker
+sudo systemctl stop docker
+sudo systemctl restart docker
+
+# Iniciar automaticamente com o sistema ou desabilitar esse comportamento
+sudo systemctl enable docker
+sudo systemctl disable docker
+```
+
+Confirme a comunicação com o daemon antes de subir os serviços:
+
+```bash
+docker info
+```
+
+Para operar somente esta aplicação, prefira os comandos do Compose:
+
+```bash
+# Ver serviços em execução
+docker compose ps
+
+# Parar os serviços, mantendo containers e configuração
+docker compose stop
+
+# Iniciar novamente containers já existentes
+docker compose start
+
+# Parar e remover containers e rede desta aplicação
+docker compose down
+```
+
+`systemctl stop docker` interrompe o daemon inteiro e, portanto, afeta todos os containers da máquina. Use-o somente quando for necessário parar o Docker como um todo. Para uma manutenção desta aplicação, use primeiro `docker compose stop` ou `docker compose down`.
+
+#### Portas e exposição em produção
+
+O `docker-compose.yml` publica a UI do Prefect com `4201:4200`. Sem um endereço IP explícito, a porta pode ficar disponível em todas as interfaces da máquina. Para restringir o acesso à própria máquina, use:
+
+```yaml
+ports:
+  - "127.0.0.1:4201:4200"
+```
+
+Nesse caso, a UI fica acessível somente em `http://127.0.0.1:4201`. Se a UI precisar ser acessada por outra máquina, não exponha a porta diretamente à internet: restrinja o firewall a redes autorizadas ou publique-a atrás de um proxy reverso com autenticação e HTTPS.
+
+Não habilite a API remota do Docker em `tcp://0.0.0.0:2375` ou `2376` sem autenticação, criptografia e regras de firewall adequadas. O socket Unix local (`/var/run/docker.sock`) é a opção padrão mais segura para o uso local.
+
 ### Intervalo de atualização
 
 Controlado por `PREFECT_INTERVALO` no `.env` (padrão: `5` minutos):
