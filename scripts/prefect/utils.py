@@ -298,6 +298,7 @@ def executar_script_sincronizacao(
         stderr_text = "".join(stderr_buffer)
 
         output_completo = stdout_text + stderr_text
+        output_lower = output_completo.lower()
         erros_detectados = []
 
         if "Resources exceeded" in output_completo or "10000 partitions" in output_completo:
@@ -306,7 +307,21 @@ def executar_script_sincronizacao(
         if "TIMESTAMP_NANOS" in output_completo or "Invalid timestamp" in output_completo:
             erros_detectados.append("ERRO: Problema com formato de timestamp")
 
-        if "ConnectionResetError" in output_completo or "connection" in output_completo.lower():
+        if "billingnotenabled" in output_lower or "billing has not been enabled" in output_lower:
+            erros_detectados.append(
+                "ERRO: BigQuery sem faturamento ativo ou com restrição de sandbox; "
+                "verifique a configuração de faturamento e a expiração das partições (<60 dias no sandbox)"
+            )
+
+        erros_conexao = (
+            "ConnectionResetError",
+            "ConnectionRefusedError",
+            "connection refused",
+            "could not connect to server",
+            "connection timed out",
+            "server closed the connection unexpectedly",
+        )
+        if any(erro.lower() in output_lower for erro in erros_conexao):
             erros_detectados.append("ERRO: Problema de conexão com banco de dados")
 
         if "ERRO CRÍTICO" in output_completo or "❌" in output_completo:

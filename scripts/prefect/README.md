@@ -186,6 +186,14 @@ Se aparecer `PrefectHTTPStatusError: Client error '401 Unauthorized'`:
 1. **Para rodar sem Prefect Cloud**: use `--run-once` ou Docker (o serviço já usa modo local).
 2. **Para usar Prefect Cloud**: faça `prefect cloud login` e depois rode o script sem `--run-once`.
 
+### Erro 403 `billingNotEnabled` ao carregar no BigQuery
+
+O projeto GCP está sem faturamento ativo ou em sandbox, onde a expiração das
+partições deve ser inferior a 60 dias. Habilite o faturamento no projeto ou
+verifique a configuração de expiração da tabela/dataset no BigQuery. Reduzir a
+expiração pode apagar partições antigas; confirme a política de retenção antes
+de alterá-la. O script incremental não define essa expiração.
+
 ### Limite de deployments no Prefect Cloud
 
 O plano gratuito do Prefect Cloud tem limite de **5 deployments**. Se atingir:
